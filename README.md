@@ -31,63 +31,63 @@ Stack: **Caddy** (TLS + reverse proxy) → **gunicorn** (WSGI) → Django, manag
 ### One-time server setup
 1. **Install dependencies:**
 
-   ```sh
-   apt update && apt install -y git caddy
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+```sh
+apt update && apt install -y git caddy
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 2. **Create the service user and directories:**
-   ```sh
-   sudo useradd --system --create-home --shell /bin/bash papernews
-   sudo mkdir -p /var/lib/papernews
-   sudo chown papernews:papernews /var/lib/papernews
-   ```
+```sh
+sudo useradd --system --create-home --shell /bin/bash papernews
+sudo mkdir -p /var/lib/papernews
+sudo chown papernews:papernews /var/lib/papernews
+```
 
 3. **Clone the repo**
-   ```sh
-   sudo -u papernews -i
-   git clone https://github.com/digiefel/papernews /opt/papernews
-   cd /opt/papernews
-   ```
+```sh
+sudo -u papernews -i
+git clone https://github.com/digiefel/papernews /opt/papernews
+cd /opt/papernews
+```
 
 4. **Create `/opt/papernews/.env`** (copy `.env.example`, fill in real values):
 
-   ```sh
-   cp .env.example .env
-   # set DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS, DJANGO_DB_PATH
-   ```
+```sh
+cp .env.example .env
+# set DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS, DJANGO_DB_PATH
+```
 
-   Generate a secret key:
+Generate a secret key:
 
-   ```sh
-   uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-   ```
+```sh
+uv run python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
 
 5. **Initialize the app:**
 
-   ```sh
-   set -a; source .env; set +a
-   uv sync --frozen
-   uv run manage.py migrate
-   uv run manage.py collectstatic --noinput
-   exit   # back to your sudo-capable user
-   ```
+```sh
+set -a; source .env; set +a
+uv sync --frozen
+uv run manage.py migrate
+uv run manage.py collectstatic --noinput
+exit   # back to your sudo-capable user
+```
 
 6. **Install the systemd service:**
 
-   ```sh
-   sudo cp /opt/papernews/deploy/papernews.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now papernews
-   sudo systemctl status papernews
-   ```
+```sh
+sudo cp /opt/papernews/deploy/papernews.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now papernews
+sudo systemctl status papernews
+```
 
 7. **Configure Caddy** — put the contents of `deploy/Caddyfile` into
-   `/etc/caddy/Caddyfile` (edit the domain), then:
+`/etc/caddy/Caddyfile` (edit the domain), then:
 
-   ```sh
-   sudo systemctl reload caddy
-   ```
+```sh
+sudo systemctl reload caddy
+```
 
 `sudo` for `systemctl restart papernews` is needed by `deploy.sh`. Allow it without a
 password by adding a sudoers rule:
