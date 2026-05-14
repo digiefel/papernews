@@ -1,0 +1,52 @@
+{% extends "core/base.html" %}
+{% load markup %}
+
+{% block title %}{{ submission.title }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <article class="row">
+    <form class="vote" method="post" action="{% url 'vote_submission' submission.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="upvote" title="upvote" aria-label="upvote">&#9650;</button>
+    </form>
+    <div class="row-body">
+      <div class="row-title">
+        {% if submission.url %}
+          <a href="{{ submission.url }}" rel="nofollow">{{ submission.title }}</a>
+          <span class="domain">({{ submission.domain }})</span>
+        {% else %}
+          {{ submission.title }}
+        {% endif %}
+      </div>
+      <div class="subtext muted">
+        {{ submission.vote_count }} point{{ submission.vote_count|pluralize }}
+        &middot; by {{ submission.author.username }}{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
+        &middot; {{ submission.created|timesince }} ago
+      </div>
+    </div>
+  </article>
+
+  {% if submission.body %}
+    <div class="post-body">{{ submission.body|render_text }}</div>
+  {% endif %}
+
+  {% if user.is_authenticated %}
+    <form class="comment-form" method="post" action="{{ submission.get_absolute_url }}">
+      {% csrf_token %}
+      {{ form.body }}
+      {{ form.body.errors }}
+      <button type="submit">add comment</button>
+    </form>
+  {% else %}
+    <p class="muted"><a href="{% url 'login' %}?next={{ request.path }}">log in</a> to comment.</p>
+  {% endif %}
+
+  <section class="comments">
+    {% for comment in roots %}
+      {% include "core/_comment.html" %}
+    {% empty %}
+      <p class="muted">No comments yet.</p>
+    {% endfor %}
+  </section>
+{% endblock %}

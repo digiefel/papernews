@@ -1,0 +1,15 @@
+{% extends "core/base.html" %}
+
+{% block title %}Sign up &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>Create an account</h1>
+  <p class="muted">Accounts are pseudonymous. Pick any username.</p>
+  <form class="stacked" method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {{ form.as_p }}
+    <button type="submit">sign up</button>
+  </form>
+  <p class="muted">Already have an account? <a href="{% url 'login' %}">Log in</a>.</p>
+{% endblock %}

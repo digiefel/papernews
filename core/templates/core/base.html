@@ -1,0 +1,37 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Papernews{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'style.css' %}">
+</head>
+<body>
+  <header>
+    <nav>
+      <a class="logo" href="{% url 'home' %}">Papernews</a>
+      <a href="{% url 'new' %}">new</a>
+      <a href="{% url 'submit' %}">submit</a>
+      <span class="spacer"></span>
+      {% if user.is_authenticated %}
+        <span class="user">{{ user.username }}</span>
+        <form class="inline" method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button type="submit" class="linkbtn">logout</button>
+        </form>
+      {% else %}
+        <a href="{% url 'login' %}">login</a>
+        <a href="{% url 'signup' %}">signup</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{% extends "core/base.html" %}
+
+{% block title %}{% if page_title %}{{ page_title }} &middot; {% endif %}Papernews{% endblock %}
+
+{% block content %}
+  {% for submission in page_obj %}
+    {% include "core/_submission_row.html" %}
+  {% empty %}
+    <p class="muted">Nothing here yet. <a href="{% url 'submit' %}">Submit something</a>.</p>
+  {% endfor %}
+
+  {% if page_obj.has_other_pages %}
+    <nav class="pager muted">
+      {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">&larr; prev</a>{% endif %}
+      <span>page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">next &rarr;</a>{% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

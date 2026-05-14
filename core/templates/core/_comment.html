@@ -1,0 +1,25 @@
+{% load markup %}
+<div class="comment" id="comment-{{ comment.pk }}" style="margin-left: {{ comment.indent }}rem;">
+  <div class="subtext muted">
+    {{ comment.author.username }}{% if comment.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
+    &middot; {{ comment.created|timesince }} ago
+    &middot; {{ comment.vote_count }} point{{ comment.vote_count|pluralize }}
+    <form class="inline vote" method="post" action="{% url 'vote_comment' comment.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <button type="submit" class="upvote" title="upvote">&#9650;</button>
+    </form>
+  </div>
+  <div class="comment-body">{{ comment.body|render_text }}</div>
+  {% if user.is_authenticated %}
+    <form class="reply" method="post" action="{{ submission.get_absolute_url }}">
+      {% csrf_token %}
+      <input type="hidden" name="parent_id" value="{{ comment.pk }}">
+      <textarea name="body" rows="2" placeholder="reply..."></textarea>
+      <button type="submit">reply</button>
+    </form>
+  {% endif %}
+  {% for child in comment.children_list %}
+    {% include "core/_comment.html" with comment=child %}
+  {% endfor %}
+</div>

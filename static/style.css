@@ -8,8 +8,12 @@ body {
 
 main {
   max-width: 640px;
-  margin: 3rem auto;
+  margin: 1.5rem auto;
   padding: 0 1rem;
+}
+
+a {
+  color: #222;
 }
 
 h1 {
@@ -19,4 +23,154 @@ h1 {
 
 .muted {
   color: #828282;
+}
+
+/* Header */
+header {
+  background: #fff5e6;
+  border-bottom: 2px solid #ff6600;
+}
+
+header nav {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+header nav a,
+header nav .user {
+  text-decoration: none;
+}
+
+header nav .logo {
+  font-weight: bold;
+}
+
+header nav .spacer {
+  flex: 1;
+}
+
+/* Submission rows */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.row-title a {
+  text-decoration: none;
+}
+
+.row-title a:hover {
+  text-decoration: underline;
+}
+
+.domain {
+  color: #828282;
+  font-size: 0.85em;
+}
+
+.subtext {
+  font-size: 0.85em;
+  margin-top: 0.1rem;
+}
+
+/* Voting */
+.vote {
+  margin: 0;
+}
+
+.upvote {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
+}
+
+.upvote:hover {
+  color: #ff6600;
+}
+
+form.inline {
+  display: inline;
+  margin: 0;
+}
+
+.linkbtn {
+  background: none;
+  border: none;
+  color: #828282;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.linkbtn:hover {
+  color: #ff6600;
+}
+
+.verified {
+  color: #1a7f37;
+}
+
+/* Comments */
+.comment {
+  margin: 0.75rem 0;
+}
+
+.comment-body,
+.post-body {
+  margin: 0.25rem 0;
+}
+
+.post-body {
+  white-space: normal;
+  padding: 0.5rem 0;
+}
+
+.reply,
+.comment-form,
+form.stacked {
+  margin: 0.4rem 0;
+}
+
+.reply textarea,
+.comment-form textarea,
+form.stacked input,
+form.stacked textarea {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  font: inherit;
+  margin-bottom: 0.3rem;
+}
+
+form.stacked p {
+  margin: 0.4rem 0;
+}
+
+button[type="submit"] {
+  font: inherit;
+  cursor: pointer;
+}
+
+.pager {
+  margin: 1rem 0;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.messages {
+  list-style: none;
+  padding: 0.5rem;
+  background: #ffffe0;
+  border: 1px solid #e0e0a0;
 }

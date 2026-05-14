@@ -1,0 +1,15 @@
+{% extends "core/base.html" %}
+
+{% block title %}Log in &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>Log in</h1>
+  <form class="stacked" method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {{ form.as_p }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button type="submit">log in</button>
+  </form>
+  <p class="muted">No account? <a href="{% url 'signup' %}">Sign up</a>.</p>
+{% endblock %}
