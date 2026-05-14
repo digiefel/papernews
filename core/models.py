@@ -31,8 +31,8 @@ class Submission(models.Model):
     )
     created = models.DateTimeField(auto_now_add=True, db_index=True)
     is_removed = models.BooleanField(default=False)
-    # Cached ranking column; unused this milestone (ranking is computed in Python).
-    # Present now so a future scaling pass is a backfill, not a migration on a large table.
+    # Nothing writes this yet — front_page ranks live (see ranking.py). It exists
+    # so switching to a cached rank is a backfill, not a schema change on a big table.
     score = models.IntegerField(default=0)
 
     objects = SubmissionManager()

@@ -21,6 +21,7 @@ MAX_INDENT = 6
 
 
 def _safe_next(request, fallback="home"):
+    """Resolve a redirect target from ?next=, rejecting off-site URLs (open-redirect guard)."""
     nxt = request.POST.get("next") or request.GET.get("next")
     if nxt and url_has_allowed_host_and_scheme(
         nxt, allowed_hosts={request.get_host()}, require_https=request.is_secure()
@@ -81,6 +82,8 @@ def submission_detail(request, pk):
     else:
         form = CommentForm()
 
+    # Fetch the whole thread in one query and assemble the tree in memory, so the
+    # recursive template render touches no database.
     comments = list(
         submission.comments.filter(is_removed=False)
         .annotate(vote_count=Count("votes"))
@@ -93,6 +96,7 @@ def submission_detail(request, pk):
         c.children_list = by_parent[c.id]
     roots = by_parent[None]
 
+    # Precompute indentation depth; capped so deep threads don't run off the page.
     stack = [(c, 0) for c in roots]
     while stack:
         comment, depth = stack.pop()
