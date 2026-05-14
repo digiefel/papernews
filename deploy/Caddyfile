@@ -1,0 +1,16 @@
+# Papernews reverse proxy. Replace papernews.example.com with your domain,
+# then place this content in /etc/caddy/Caddyfile and run `sudo systemctl reload caddy`.
+# Caddy provisions and renews the TLS certificate automatically.
+
+papernews.example.com {
+	encode gzip
+
+	# Serve collected static files directly.
+	handle_path /static/* {
+		root * /opt/papernews/staticfiles
+		file_server
+	}
+
+	# Everything else goes to gunicorn.
+	reverse_proxy 127.0.0.1:8000
+}

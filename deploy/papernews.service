@@ -1,0 +1,20 @@
+# systemd unit for the Papernews production app.
+# Install: sudo cp deploy/papernews.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now papernews
+
+[Unit]
+Description=Papernews (Django + gunicorn)
+After=network.target
+
+[Service]
+Type=exec
+User=papernews
+Group=papernews
+WorkingDirectory=/opt/papernews
+EnvironmentFile=/opt/papernews/.env
+ExecStart=/usr/bin/env uv run gunicorn config.wsgi:application -c deploy/gunicorn.conf.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
