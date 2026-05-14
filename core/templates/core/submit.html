@@ -1,0 +1,14 @@
+{% extends "core/base.html" %}
+
+{% block title %}Submit &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>Submit</h1>
+  <p class="muted">Post a link, or leave the URL blank and write a text post.</p>
+  <form class="stacked" method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {{ form.as_p }}
+    <button type="submit">submit</button>
+  </form>
+{% endblock %}
