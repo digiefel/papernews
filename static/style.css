@@ -269,9 +269,19 @@ details.metadata > summary:hover {
   max-width: 100%;
 }
 
+/* JS-only UI: hidden by default to avoid flicker; shown when <html> has .js */
+.js-only {
+  display: none;
+}
+
+.js .js-only {
+  display: block;
+}
+
 /* BibTeX inline section */
 .bibtex-extract {
   margin-top: 0.5rem;
+  padding-top: 0.5rem;
   border-top: 1px solid #e0dcd0;
 }
 
@@ -286,6 +296,19 @@ details.metadata > summary:hover {
   box-sizing: border-box;
   font: inherit;
   margin-bottom: 0.3rem;
+  transition: outline-color 0.1s, background 0.1s;
+}
+
+.bibtex-body textarea.drag-over {
+  outline: 2px dashed #ff6600;
+  outline-offset: 1px;
+  background: #fff8f0;
+}
+
+.extract-status {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.85em;
+  font-style: italic;
 }
 
 .file-row {

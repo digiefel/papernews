@@ -666,105 +666,6 @@ class SubmitMetadataTests(TestCase):
         self.user = User.objects.create_user("bob", password="pw-test-12345")
         self.client.force_login(self.user)
 
-    def test_extract_action_does_not_create_submission(self):
-        resp = self.client.post(
-            "/submit/",
-            {
-                "action": "extract",
-                "bibtex_text": SAMPLE_BIBTEX,
-                "title": "",
-                "url": "",
-                "body": "",
-                "year": "",
-                "source": "",
-                "authors_text": "",
-                "post_globally": "on",
-            },
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(Submission.objects.count(), 0)
-        form = resp.context["form"]
-        self.assertEqual(
-            form.initial["title"], "A Mathematical Theory of Communication"
-        )
-        self.assertEqual(form.initial["year"], 1948)
-        self.assertEqual(form.initial["source"], "Bell System Technical Journal")
-        # DOI from BibTeX populates the URL field (as a doi.org URL) since
-        # the form has no separate DOI input — URL is the canonical identifier.
-        self.assertEqual(
-            form.initial["url"],
-            "https://doi.org/10.1002/j.1538-7305.1948.tb01338.x",
-        )
-        self.assertIn("Shannon", form.initial["authors_text"])
-        self.assertIn("Filled from BibTeX", resp.context["notice"])
-
-    def test_extract_action_garbage_shows_notice(self):
-        resp = self.client.post(
-            "/submit/",
-            {
-                "action": "extract",
-                "bibtex_text": "no idea",
-                "title": "",
-                "url": "",
-                "body": "",
-                "post_globally": "on",
-            },
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertIn("Couldn't extract", resp.context["notice"])
-
-    def test_extract_from_url_field_when_doi(self):
-        with patch(
-            "core.views.extract_metadata",
-            return_value=({"title": "From URL", "year": 1948}, "doi"),
-        ):
-            resp = self.client.post(
-                "/submit/",
-                {
-                    "action": "extract",
-                    "bibtex_text": "",
-                    "url": "https://doi.org/10.1038/nature12373",
-                    "title": "",
-                    "body": "",
-                    "year": "",
-                    "source": "",
-                    "doi": "",
-                    "authors_text": "",
-                    "post_globally": "on",
-                },
-            )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context["form"].initial["title"], "From URL")
-        self.assertIn("Filled from DOI URL", resp.context["notice"])
-
-    def test_extract_from_uploaded_bibtex_file(self):
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        upload = SimpleUploadedFile(
-            "shannon.bib",
-            SAMPLE_BIBTEX.encode("utf-8"),
-            content_type="text/plain",
-        )
-        resp = self.client.post(
-            "/submit/",
-            {
-                "action": "extract",
-                "bibtex_text": "",
-                "url": "",
-                "title": "",
-                "body": "",
-                "year": "",
-                "source": "",
-                "doi": "",
-                "authors_text": "",
-                "post_globally": "on",
-                "bibtex_file": upload,
-            },
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context["form"].initial["year"], 1948)
-        self.assertIn("Filled from BibTeX", resp.context["notice"])
-
     def test_submit_auto_fills_doi_from_doi_url(self):
         self.client.post(
             "/submit/",
@@ -885,3 +786,84 @@ class SubmitMetadataTests(TestCase):
         self.assertIn("Doe, A.", body)
         self.assertIn("2023", body)
         self.assertIn("journal", body)
+
+
+class ApiExtractMetadataTests(TestCase):
+    """The /api/extract-metadata/ endpoint is the single extraction path; the
+    no-JS submit form has no extract button. These tests pin its contract:
+    auth-gated JSON, accepts text or file, returns metadata + kind."""
+
+    URL = "/api/extract-metadata/"
+
+    def setUp(self):
+        self.user = User.objects.create_user("bob", password="pw-test-12345")
+
+    def test_anonymous_user_gets_401_json(self):
+        resp = self.client.post(self.URL, {"text": SAMPLE_BIBTEX})
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp["Content-Type"], "application/json")
+        self.assertIn("error", resp.json())
+
+    def test_get_is_405(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(self.URL)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_post_bibtex_text_returns_metadata_and_kind(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.URL, {"text": SAMPLE_BIBTEX})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "bibtex")
+        self.assertEqual(
+            data["metadata"]["title"],
+            "A Mathematical Theory of Communication",
+        )
+        self.assertEqual(data["metadata"]["year"], 1948)
+
+    def test_post_doi_text_returns_metadata(self):
+        self.client.force_login(self.user)
+        with patch(
+            "core.views.extract_metadata",
+            return_value=({"title": "T", "doi": "10.1038/x.y"}, "doi"),
+        ) as m:
+            resp = self.client.post(self.URL, {"text": "10.1038/x.y"})
+        m.assert_called_once_with("10.1038/x.y")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "doi")
+        self.assertEqual(data["metadata"]["doi"], "10.1038/x.y")
+
+    def test_post_garbage_text_returns_400(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.URL, {"text": "random nonsense"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp["Content-Type"], "application/json")
+
+    def test_post_uploaded_bibtex_file_returns_metadata(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.user)
+        upload = SimpleUploadedFile(
+            "shannon.bib",
+            SAMPLE_BIBTEX.encode("utf-8"),
+            content_type="application/x-bibtex",
+        )
+        resp = self.client.post(self.URL, {"file": upload})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "bibtex")
+        self.assertEqual(data["metadata"]["year"], 1948)
+
+    def test_post_oversize_file_rejected(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.user)
+        upload = SimpleUploadedFile(
+            "big.bib",
+            b"x" * (200_001),
+            content_type="application/x-bibtex",
+        )
+        resp = self.client.post(self.URL, {"file": upload})
+        self.assertEqual(resp.status_code, 413)
+

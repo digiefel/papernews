@@ -316,93 +316,62 @@ def reply(request, sub_pk, comment_pk):
 
 @login_required
 def submit(request):
-    notice = None
     if request.method == "POST":
-        action = request.POST.get("action", "submit")
-        if action == "extract":
-            # Priority: uploaded .bib file > pasted BibTeX > URL field (if DOI).
-            bibtex_text = request.POST.get("bibtex_text", "").strip()
-            url = request.POST.get("url", "").strip()
-            uploaded = request.FILES.get("bibtex_file")
-            source_text = None
-            if uploaded:
-                source_text = uploaded.read().decode("utf-8", errors="replace")
-            elif bibtex_text:
-                source_text = bibtex_text
-            elif url:
-                source_text = url
-            metadata, kind = extract_metadata(source_text or "")
-            initial = {
-                "title": request.POST.get("title", ""),
-                "url": url,
-                "body": request.POST.get("body", ""),
-                "year": request.POST.get("year", ""),
-                "source": request.POST.get("source", ""),
-                "doi": request.POST.get("doi", ""),
-                "authors_text": request.POST.get("authors_text", ""),
-                "bibtex_text": (
-                    source_text if uploaded else bibtex_text
-                ),
-                "post_globally": "post_globally" in request.POST,
-                "communities": request.POST.getlist("communities"),
-            }
-            if metadata:
-                for key in ("title", "year", "source"):
-                    if metadata.get(key):
-                        initial[key] = metadata[key]
-                if metadata.get("doi") and not initial.get("url"):
-                    initial["url"] = f"https://doi.org/{metadata['doi']}"
-                if metadata.get("authors"):
-                    initial["authors_text"] = "; ".join(metadata["authors"])
-                label = "DOI URL" if kind == "doi" else "BibTeX"
-                notice = f"Filled from {label} — review and edit."
-            elif source_text:
-                notice = "Couldn't extract anything — fill in manually."
-            form = SubmissionForm(initial=initial, user=request.user)
-        else:
-            form = SubmissionForm(request.POST, user=request.user)
-            if form.is_valid():
-                with transaction.atomic():
-                    submission = form.save(commit=False)
-                    submission.author = request.user
-                    if submission.url:
-                        doi = normalize_doi(submission.url)
-                        if doi:
-                            submission.doi = doi
-                    submission.save()
-                    if form.cleaned_data.get("post_globally"):
-                        SubmissionScope.objects.create(
-                            submission=submission, kind=SubmissionScope.KIND_GLOBAL
-                        )
-                    for community in form.cleaned_data.get("communities", []):
-                        SubmissionScope.objects.create(
-                            submission=submission,
-                            kind=SubmissionScope.KIND_COMMUNITY,
-                            community=community,
-                        )
-                    for position, name in enumerate(form.split_authors()):
-                        author, _ = Author.objects.get_or_create(name=name)
-                        SubmissionAuthor.objects.create(
-                            submission=submission, author=author, position=position
-                        )
-                return redirect(submission.get_absolute_url())
+        form = SubmissionForm(request.POST, user=request.user)
+        if form.is_valid():
+            with transaction.atomic():
+                submission = form.save(commit=False)
+                submission.author = request.user
+                if submission.url:
+                    doi = normalize_doi(submission.url)
+                    if doi:
+                        submission.doi = doi
+                submission.save()
+                if form.cleaned_data.get("post_globally"):
+                    SubmissionScope.objects.create(
+                        submission=submission, kind=SubmissionScope.KIND_GLOBAL
+                    )
+                for community in form.cleaned_data.get("communities", []):
+                    SubmissionScope.objects.create(
+                        submission=submission,
+                        kind=SubmissionScope.KIND_COMMUNITY,
+                        community=community,
+                    )
+                for position, name in enumerate(form.split_authors()):
+                    author, _ = Author.objects.get_or_create(name=name)
+                    SubmissionAuthor.objects.create(
+                        submission=submission, author=author, position=position
+                    )
+            return redirect(submission.get_absolute_url())
     else:
         form = SubmissionForm(user=request.user)
-    return render(request, "core/submit.html", {"form": form, "notice": notice})
+    return render(request, "core/submit.html", {"form": form})
+
+
+MAX_BIBTEX_UPLOAD_BYTES = 200_000  # BibTeX is small text; 200 KB is generous.
 
 
 @require_POST
 def api_extract_metadata(request):
-    source_text = request.POST.get("text", "").strip()
+    # Authentication: gate the endpoint so anonymous callers can't use the
+    # server as a doi.org fetch proxy. Return JSON (not Django's HTML login
+    # redirect) so the AJAX caller can handle the failure cleanly.
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication required"}, status=401)
+
     uploaded = request.FILES.get("file")
-    if uploaded:
-        source_text = uploaded.read().decode("utf-8", errors="ignore")
+    if uploaded is not None:
+        if uploaded.size > MAX_BIBTEX_UPLOAD_BYTES:
+            return JsonResponse({"error": "file too large"}, status=413)
+        source_text = uploaded.read().decode("utf-8", errors="replace")
+    else:
+        source_text = request.POST.get("text", "").strip()
 
     metadata, kind = extract_metadata(source_text)
     if not metadata:
         return JsonResponse({"error": "unrecognized"}, status=400)
-    
-    return JsonResponse({"metadata": metadata})
+
+    return JsonResponse({"metadata": metadata, "kind": kind})
 
 
 def communities_index(request):

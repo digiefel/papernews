@@ -6,7 +6,7 @@
   <h1>Submit</h1>
   <p class="muted">Post a link, or leave the URL blank and write a text post.</p>
 
-  <form class="stacked" method="post" enctype="multipart/form-data">
+  <form class="stacked" method="post">
     {% csrf_token %}
     {{ form.non_field_errors }}
 
@@ -40,11 +40,11 @@
       {{ form.body.errors }}
     </p>
 
-    <details class="metadata"{% if notice %} open{% endif %}>
+    <details class="metadata"{% if form.year.value or form.source.value or form.authors_text.value %} open{% endif %}>
       <summary class="muted">Optional metadata</summary>
 
       <div class="metadata-body">
-        {% if notice %}<p class="muted meta-notice">{{ notice }}</p>{% endif %}
+        <p class="extract-status muted" hidden></p>
 
         <p>
           <label for="{{ form.authors_text.id_for_label }}">Authors</label>
@@ -66,8 +66,8 @@
           </p>
         </div>
 
-        <div class="bibtex-extract">
-          <p class="muted">Fill in from BibTeX or DOI URL above</p>
+        <div class="bibtex-extract js-only">
+          <p class="muted">Paste BibTeX or drop a .bib file to auto-fill above.</p>
           <div class="bibtex-body">
             {{ form.bibtex_text }}
             <p class="file-row">
@@ -75,117 +75,159 @@
                 {{ form.bibtex_file }}
                 <span class="muted">{{ form.bibtex_file.label }}</span>
               </label>
-              <button type="submit" name="action" value="extract" formnovalidate>extract</button>
             </p>
           </div>
         </div>
-
       </div>
     </details>
 
-    <button type="submit" name="action" value="submit">submit</button>
+    <button type="submit">submit</button>
   </form>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      const fileRow = document.querySelector(".file-row");
-      if (!fileRow) return;
-      
-      // Progressive enhancement: Hide the entire manual file UI and notice if JS runs.
-      fileRow.style.display = "none";
-      const notice = document.querySelector(".meta-notice");
-      if (notice) notice.style.display = "none";
+  (function () {
+    var detailsEl = document.querySelector("details.metadata");
+    var urlInput = document.getElementById("id_url");
+    var bibtexInput = document.getElementById("id_bibtex_text");
+    var fileInput = document.getElementById("id_bibtex_file");
+    var statusEl = document.querySelector(".extract-status");
+    var csrfEl = document.querySelector("[name=csrfmiddlewaretoken]");
+    if (!csrfEl) return;
+    var csrf = csrfEl.value;
 
-      const urlInput = document.getElementById("id_url");
-      const bibtexInput = document.getElementById("id_bibtex_text");
+    var fields = {
+      title: document.getElementById("id_title"),
+      year: document.getElementById("id_year"),
+      source: document.getElementById("id_source"),
+      authors: document.getElementById("id_authors_text"),
+      url: urlInput,
+    };
 
-      const titleInput = document.getElementById("id_title");
-      const authorsInput = document.getElementById("id_authors_text");
-      const yearInput = document.getElementById("id_year");
-      const sourceInput = document.getElementById("id_source");
+    function looksLikeDoi(v) {
+      var t = (v || "").trim();
+      return /^10\.\d{4,9}\/\S+$/.test(t)
+        || /^(https?:\/\/)?(dx\.)?doi\.org\/10\.\d{4,9}\//i.test(t);
+    }
 
-      async function doExtract(textValue = "", fileObj = null) {
-        if (!textValue && !fileObj) return;
+    function looksLikeBibtex(v) {
+      return (v || "").trim().startsWith("@");
+    }
 
-        const formData = new FormData();
-        formData.append("csrfmiddlewaretoken", document.querySelector('[name=csrfmiddlewaretoken]').value);
-        if (textValue) formData.append("text", textValue);
-        if (fileObj) formData.append("file", fileObj);
+    function setStatus(msg) {
+      if (!statusEl) return;
+      if (msg) {
+        statusEl.textContent = msg;
+        statusEl.hidden = false;
+      } else {
+        statusEl.textContent = "";
+        statusEl.hidden = true;
+      }
+    }
 
-        try {
-          const res = await fetch("{% url 'api_extract_metadata' %}", {
-            method: "POST",
-            body: formData,
-          });
-          if (!res.ok) return;
+    function applyMetadata(m) {
+      if (m.title && fields.title && !fields.title.value) fields.title.value = m.title;
+      if (m.year && fields.year && !fields.year.value) fields.year.value = m.year;
+      if (m.source && fields.source && !fields.source.value) fields.source.value = m.source;
+      if (m.authors && m.authors.length && fields.authors && !fields.authors.value) {
+        fields.authors.value = m.authors.join("; ");
+      }
+      // Always canonicalize URL when we know the DOI.
+      if (fields.url && m.doi) {
+        fields.url.value = "https://doi.org/" + m.doi;
+      } else if (fields.url && !fields.url.value && m.url) {
+        fields.url.value = m.url;
+      }
+    }
 
-          const data = await res.json();
-          if (data.metadata) {
-            const m = data.metadata;
-            if (m.title && !titleInput.value) titleInput.value = m.title;
-            if (m.year && !yearInput.value) yearInput.value = m.year;
-            if (m.source && !sourceInput.value) sourceInput.value = m.source;
-            if (m.authors && m.authors.length > 0 && !authorsInput.value) {
-              authorsInput.value = m.authors.join("; ");
-            }
-            if (!urlInput.value) {
-              if (m.doi) {
-                urlInput.value = "https://doi.org/" + m.doi;
-              } else if (m.url) {
-                urlInput.value = m.url;
-              }
-            }
-          }
-        } catch (e) {
-          // Silent fail on network error, user can still type manually.
+    var inflight = null;
+
+    function extract(opts) {
+      if (inflight) inflight.abort();
+      var controller = new AbortController();
+      inflight = controller;
+
+      var fd = new FormData();
+      fd.append("csrfmiddlewaretoken", csrf);
+      if (opts.text) fd.append("text", opts.text);
+      if (opts.file) fd.append("file", opts.file);
+
+      setStatus("Extracting…");
+      fetch("{% url 'api_extract_metadata' %}", {
+        method: "POST",
+        body: fd,
+        signal: controller.signal,
+        credentials: "same-origin",
+      }).then(function (res) {
+        if (res.status === 401) {
+          setStatus("Sign in to auto-fill metadata.");
+          return null;
         }
-      }
+        if (!res.ok) {
+          setStatus("Couldn't extract — fill in manually.");
+          return null;
+        }
+        return res.json();
+      }).then(function (data) {
+        if (!data || !data.metadata) return;
+        applyMetadata(data.metadata);
+        if (detailsEl) detailsEl.open = true;
+        var label = data.kind === "doi" ? "DOI" : "BibTeX";
+        setStatus("Filled from " + label + " — review and edit.");
+      }).catch(function (err) {
+        if (err.name === "AbortError") return;
+        setStatus("Couldn't reach server.");
+      });
+    }
 
-      if (urlInput) {
-        urlInput.addEventListener("blur", (e) => doExtract(e.target.value));
-      }
-      if (bibtexInput) {
-        bibtexInput.addEventListener("blur", (e) => doExtract(e.target.value));
+    if (urlInput) {
+      urlInput.addEventListener("change", function () {
+        if (looksLikeDoi(urlInput.value)) extract({ text: urlInput.value });
+      });
+      urlInput.addEventListener("paste", function () {
+        setTimeout(function () {
+          if (looksLikeDoi(urlInput.value)) extract({ text: urlInput.value });
+        }, 0);
+      });
+    }
 
-        // Drag and drop support on the textarea itself
-        bibtexInput.addEventListener("dragover", (e) => {
+    if (bibtexInput) {
+      bibtexInput.addEventListener("change", function () {
+        if (looksLikeBibtex(bibtexInput.value)) extract({ text: bibtexInput.value });
+      });
+      bibtexInput.addEventListener("paste", function () {
+        setTimeout(function () {
+          if (looksLikeBibtex(bibtexInput.value)) extract({ text: bibtexInput.value });
+        }, 0);
+      });
+      bibtexInput.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        bibtexInput.classList.add("drag-over");
+      });
+      bibtexInput.addEventListener("dragleave", function () {
+        bibtexInput.classList.remove("drag-over");
+      });
+      bibtexInput.addEventListener("drop", function (e) {
+        bibtexInput.classList.remove("drag-over");
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length > 0) {
           e.preventDefault();
-          bibtexInput.style.backgroundColor = "#eef";
-        });
-        
-        bibtexInput.addEventListener("dragleave", (e) => {
-          e.preventDefault();
-          bibtexInput.style.backgroundColor = "";
-        });
-        
-        bibtexInput.addEventListener("drop", (e) => {
-          e.preventDefault();
-          bibtexInput.style.backgroundColor = "";
-          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            handleFile(e.dataTransfer.files[0]);
-          }
-        });
+          var file = files[0];
+          var reader = new FileReader();
+          reader.onload = function (ev) {
+            bibtexInput.value = ev.target.result;
+            extract({ text: ev.target.result });
+          };
+          reader.readAsText(file);
+        }
+      });
+    }
 
-        // Paste support: catch pasted files or trigger extraction on pasted text
-        bibtexInput.addEventListener("paste", (e) => {
-          if (e.clipboardData.files && e.clipboardData.files.length > 0) {
-            e.preventDefault();
-            handleFile(e.clipboardData.files[0]);
-          } else {
-            // Give text a moment to paste into the value, then fetch
-            setTimeout(() => doExtract(bibtexInput.value), 50);
-          }
-        });
-      }
-
-      function handleFile(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          bibtexInput.value = e.target.result;
-          doExtract(e.target.result);
-        };
-        reader.readAsText(file);
-      }
-    });
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (file) extract({ file: file });
+      });
+    }
+  })();
   </script>
 {% endblock %}
