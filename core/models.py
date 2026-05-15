@@ -35,6 +35,12 @@ class Submission(models.Model):
     # Nothing writes this yet — front_page ranks live (see ranking.py). It exists
     # so switching to a cached rank is a backfill, not a schema change on a big table.
     score = models.IntegerField(default=0)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    source = models.CharField(max_length=200, blank=True)
+    doi = models.CharField(max_length=200, blank=True, db_index=True)
+    authors = models.ManyToManyField(
+        "Author", through="SubmissionAuthor", related_name="submissions"
+    )
 
     objects = SubmissionManager()
 
@@ -283,3 +289,38 @@ class CommentScope(_ScopeBase):
         if self.kind == self.KIND_COMMUNITY:
             return f"comment#{self.comment_id} in {self.community}"
         return f"comment#{self.comment_id} {self.kind}"
+
+
+class Author(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class SubmissionAuthor(models.Model):
+    submission = models.ForeignKey(
+        Submission, on_delete=models.CASCADE, related_name="submission_authors"
+    )
+    author = models.ForeignKey(
+        Author, on_delete=models.CASCADE, related_name="submission_authors"
+    )
+    position = models.PositiveSmallIntegerField()
+
+    class Meta:
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["submission", "position"], name="uniq_submission_author_position"
+            ),
+            models.UniqueConstraint(
+                fields=["submission", "author"], name="uniq_submission_author"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.author.name} ({self.position}) on submission#{self.submission_id}"

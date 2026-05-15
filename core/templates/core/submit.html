@@ -5,25 +5,11 @@
 {% block content %}
   <h1>Submit</h1>
   <p class="muted">Post a link, or leave the URL blank and write a text post.</p>
-  <form class="stacked" method="post">
+
+  <form class="stacked" method="post" enctype="multipart/form-data">
     {% csrf_token %}
     {{ form.non_field_errors }}
-    <p>
-      <label for="{{ form.title.id_for_label }}">Title</label>
-      {{ form.title }}
-      {{ form.title.errors }}
-    </p>
-    <p>
-      <label for="{{ form.url.id_for_label }}">URL</label>
-      {{ form.url }}
-      {{ form.url.errors }}
-    </p>
-    <p>
-      <label for="{{ form.body.id_for_label }}">Text</label>
-      {{ form.body }}
-      <span class="muted">{{ form.body.help_text }}</span>
-      {{ form.body.errors }}
-    </p>
+
     <fieldset class="scope-picker">
       <legend>Where to post</legend>
       <p>
@@ -35,6 +21,171 @@
       {% endif %}
       {{ form.communities.errors }}
     </fieldset>
-    <button type="submit">submit</button>
+
+    <p>
+      <label for="{{ form.title.id_for_label }}">Title</label>
+      {{ form.title }}
+      {{ form.title.errors }}
+    </p>
+    <p>
+      <label for="{{ form.url.id_for_label }}">URL or DOI</label>
+      {{ form.url }}
+      <span class="muted">{{ form.url.help_text }}</span>
+      {{ form.url.errors }}
+    </p>
+    <p>
+      <label for="{{ form.body.id_for_label }}">Text</label>
+      {{ form.body }}
+      <span class="muted">{{ form.body.help_text }}</span>
+      {{ form.body.errors }}
+    </p>
+
+    <details class="metadata"{% if notice %} open{% endif %}>
+      <summary class="muted">Optional metadata</summary>
+
+      <div class="metadata-body">
+        {% if notice %}<p class="muted meta-notice">{{ notice }}</p>{% endif %}
+
+        <p>
+          <label for="{{ form.authors_text.id_for_label }}">Authors</label>
+          {{ form.authors_text }}
+          <span class="muted">{{ form.authors_text.help_text }}</span>
+          {{ form.authors_text.errors }}
+        </p>
+
+        <div class="meta-row">
+          <p class="field-year">
+            <label for="{{ form.year.id_for_label }}">Year</label>
+            {{ form.year }}
+            {{ form.year.errors }}
+          </p>
+          <p class="field-source">
+            <label for="{{ form.source.id_for_label }}">Source</label>
+            {{ form.source }}
+            {{ form.source.errors }}
+          </p>
+        </div>
+
+        <div class="bibtex-extract">
+          <p class="muted">Fill in from BibTeX or DOI URL above</p>
+          <div class="bibtex-body">
+            {{ form.bibtex_text }}
+            <p class="file-row">
+              <label class="file-drop">
+                {{ form.bibtex_file }}
+                <span class="muted">{{ form.bibtex_file.label }}</span>
+              </label>
+              <button type="submit" name="action" value="extract" formnovalidate>extract</button>
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </details>
+
+    <button type="submit" name="action" value="submit">submit</button>
   </form>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const fileRow = document.querySelector(".file-row");
+      if (!fileRow) return;
+      
+      // Progressive enhancement: Hide the entire manual file UI and notice if JS runs.
+      fileRow.style.display = "none";
+      const notice = document.querySelector(".meta-notice");
+      if (notice) notice.style.display = "none";
+
+      const urlInput = document.getElementById("id_url");
+      const bibtexInput = document.getElementById("id_bibtex_text");
+
+      const titleInput = document.getElementById("id_title");
+      const authorsInput = document.getElementById("id_authors_text");
+      const yearInput = document.getElementById("id_year");
+      const sourceInput = document.getElementById("id_source");
+
+      async function doExtract(textValue = "", fileObj = null) {
+        if (!textValue && !fileObj) return;
+
+        const formData = new FormData();
+        formData.append("csrfmiddlewaretoken", document.querySelector('[name=csrfmiddlewaretoken]').value);
+        if (textValue) formData.append("text", textValue);
+        if (fileObj) formData.append("file", fileObj);
+
+        try {
+          const res = await fetch("{% url 'api_extract_metadata' %}", {
+            method: "POST",
+            body: formData,
+          });
+          if (!res.ok) return;
+
+          const data = await res.json();
+          if (data.metadata) {
+            const m = data.metadata;
+            if (m.title && !titleInput.value) titleInput.value = m.title;
+            if (m.year && !yearInput.value) yearInput.value = m.year;
+            if (m.source && !sourceInput.value) sourceInput.value = m.source;
+            if (m.authors && m.authors.length > 0 && !authorsInput.value) {
+              authorsInput.value = m.authors.join("; ");
+            }
+            if (!urlInput.value) {
+              if (m.doi) {
+                urlInput.value = "https://doi.org/" + m.doi;
+              } else if (m.url) {
+                urlInput.value = m.url;
+              }
+            }
+          }
+        } catch (e) {
+          // Silent fail on network error, user can still type manually.
+        }
+      }
+
+      if (urlInput) {
+        urlInput.addEventListener("blur", (e) => doExtract(e.target.value));
+      }
+      if (bibtexInput) {
+        bibtexInput.addEventListener("blur", (e) => doExtract(e.target.value));
+
+        // Drag and drop support on the textarea itself
+        bibtexInput.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          bibtexInput.style.backgroundColor = "#eef";
+        });
+        
+        bibtexInput.addEventListener("dragleave", (e) => {
+          e.preventDefault();
+          bibtexInput.style.backgroundColor = "";
+        });
+        
+        bibtexInput.addEventListener("drop", (e) => {
+          e.preventDefault();
+          bibtexInput.style.backgroundColor = "";
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            handleFile(e.dataTransfer.files[0]);
+          }
+        });
+
+        // Paste support: catch pasted files or trigger extraction on pasted text
+        bibtexInput.addEventListener("paste", (e) => {
+          if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+            e.preventDefault();
+            handleFile(e.clipboardData.files[0]);
+          } else {
+            // Give text a moment to paste into the value, then fetch
+            setTimeout(() => doExtract(bibtexInput.value), 50);
+          }
+        });
+      }
+
+      function handleFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          bibtexInput.value = e.target.result;
+          doExtract(e.target.result);
+        };
+        reader.readAsText(file);
+      }
+    });
+  </script>
 {% endblock %}

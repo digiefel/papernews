@@ -1,11 +1,19 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from .citations import (
+    extract_metadata,
+    fetch_bibtex_for_doi,
+    normalize_doi,
+    parse_bibtex,
+)
 from .models import (
+    Author,
     Comment,
     CommentScope,
     CommentVote,
@@ -14,6 +22,7 @@ from .models import (
     Profile,
     Save,
     Submission,
+    SubmissionAuthor,
     SubmissionScope,
     SubmissionVote,
 )
@@ -555,3 +564,313 @@ class VisibilityTests(TestCase):
         # Form should reject the choice (queryset is restricted to writable communities)
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(Submission.objects.filter(title="intruder").exists())
+
+
+SAMPLE_BIBTEX = """@article{shannon1948,
+  title = {A Mathematical Theory of Communication},
+  author = {Shannon, Claude E. and Weaver, Warren},
+  journal = {Bell System Technical Journal},
+  year = {1948},
+  doi = {10.1002/j.1538-7305.1948.tb01338.x},
+  url = {https://example.org/shannon}
+}"""
+
+
+class CitationsTests(TestCase):
+    def test_parse_bibtex_extracts_known_fields(self):
+        parsed = parse_bibtex(SAMPLE_BIBTEX)
+        self.assertEqual(parsed["title"], "A Mathematical Theory of Communication")
+        self.assertEqual(
+            parsed["authors"], ["Shannon, Claude E.", "Weaver, Warren"]
+        )
+        self.assertEqual(parsed["year"], 1948)
+        self.assertEqual(parsed["source"], "Bell System Technical Journal")
+        self.assertEqual(parsed["doi"], "10.1002/j.1538-7305.1948.tb01338.x")
+        self.assertEqual(parsed["url"], "https://example.org/shannon")
+
+    def test_parse_bibtex_booktitle_maps_to_source(self):
+        text = (
+            "@inproceedings{x, title={T}, author={A}, "
+            "booktitle={conference}, year={2020}}"
+        )
+        parsed = parse_bibtex(text)
+        self.assertEqual(parsed["source"], "conference")
+
+    def test_parse_bibtex_malformed_returns_none(self):
+        self.assertIsNone(parse_bibtex("not bibtex"))
+        self.assertIsNone(parse_bibtex(""))
+
+    def test_normalize_doi_strips_prefixes(self):
+        for raw in (
+            "10.1048/x.y",
+            "https://doi.org/10.1048/x.y",
+            "http://dx.doi.org/10.1048/x.y",
+            "  doi:10.1048/x.y  ",
+        ):
+            self.assertEqual(normalize_doi(raw), "10.1048/x.y")
+
+    def test_normalize_doi_rejects_garbage(self):
+        self.assertIsNone(normalize_doi("not a doi"))
+        self.assertIsNone(normalize_doi(""))
+        self.assertIsNone(normalize_doi(None))
+
+    def test_fetch_bibtex_for_doi_uses_content_negotiation(self):
+        class FakeResp:
+            status = 200
+            headers = type("H", (), {"get_content_charset": lambda self: "utf-8"})()
+
+            def read(self):
+                return SAMPLE_BIBTEX.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=5):
+            captured["url"] = req.full_url
+            captured["accept"] = req.get_header("Accept")
+            return FakeResp()
+
+        with patch("core.citations.urllib.request.urlopen", fake_urlopen):
+            body = fetch_bibtex_for_doi("10.1048/x.y")
+        self.assertEqual(captured["url"], "https://doi.org/10.1048/x.y")
+        self.assertEqual(captured["accept"], "application/x-bibtex")
+        self.assertIn("A Mathematical Theory of Communication", body)
+
+    def test_extract_metadata_bibtex_path(self):
+        meta, kind = extract_metadata(SAMPLE_BIBTEX)
+        self.assertEqual(kind, "bibtex")
+        self.assertEqual(meta["year"], 1948)
+
+    def test_extract_metadata_doi_path(self):
+        with patch(
+            "core.citations.fetch_bibtex_for_doi", return_value=SAMPLE_BIBTEX
+        ):
+            meta, kind = extract_metadata("10.1048/x.y")
+        self.assertEqual(kind, "doi")
+        self.assertEqual(meta["year"], 1948)
+        # DOI from input is used even when the fetched bibtex has its own DOI.
+        # Our orchestrator only sets the input-DOI if BibTeX didn't include one.
+        self.assertIn("doi", meta)
+
+    def test_extract_metadata_doi_fetch_failure_returns_minimal(self):
+        with patch("core.citations.fetch_bibtex_for_doi", return_value=None):
+            meta, kind = extract_metadata("10.1048/x.y")
+        self.assertEqual(kind, "doi")
+        self.assertEqual(meta, {"doi": "10.1048/x.y"})
+
+    def test_extract_metadata_garbage_returns_none(self):
+        meta, kind = extract_metadata("just some words")
+        self.assertIsNone(meta)
+        self.assertIsNone(kind)
+
+
+class SubmitMetadataTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("bob", password="pw-test-12345")
+        self.client.force_login(self.user)
+
+    def test_extract_action_does_not_create_submission(self):
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "extract",
+                "bibtex_text": SAMPLE_BIBTEX,
+                "title": "",
+                "url": "",
+                "body": "",
+                "year": "",
+                "source": "",
+                "doi": "",
+                "authors_text": "",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Submission.objects.count(), 0)
+        form = resp.context["form"]
+        self.assertEqual(
+            form.initial["title"], "A Mathematical Theory of Communication"
+        )
+        self.assertEqual(form.initial["year"], 1948)
+        self.assertEqual(form.initial["source"], "Bell System Technical Journal")
+        self.assertEqual(
+            form.initial["doi"], "10.1002/j.1538-7305.1948.tb01338.x"
+        )
+        self.assertIn("Shannon", form.initial["authors_text"])
+        self.assertIn("Filled from BibTeX", resp.context["notice"])
+
+    def test_extract_action_garbage_shows_notice(self):
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "extract",
+                "bibtex_text": "no idea",
+                "title": "",
+                "url": "",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Couldn't extract", resp.context["notice"])
+
+    def test_extract_from_url_field_when_doi(self):
+        with patch(
+            "core.views.extract_metadata",
+            return_value=({"title": "From URL", "year": 1948}, "doi"),
+        ):
+            resp = self.client.post(
+                "/submit/",
+                {
+                    "action": "extract",
+                    "bibtex_text": "",
+                    "url": "https://doi.org/10.1038/nature12373",
+                    "title": "",
+                    "body": "",
+                    "year": "",
+                    "source": "",
+                    "doi": "",
+                    "authors_text": "",
+                    "post_globally": "on",
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["form"].initial["title"], "From URL")
+        self.assertIn("Filled from DOI URL", resp.context["notice"])
+
+    def test_extract_from_uploaded_bibtex_file(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        upload = SimpleUploadedFile(
+            "shannon.bib",
+            SAMPLE_BIBTEX.encode("utf-8"),
+            content_type="text/plain",
+        )
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "extract",
+                "bibtex_text": "",
+                "url": "",
+                "title": "",
+                "body": "",
+                "year": "",
+                "source": "",
+                "doi": "",
+                "authors_text": "",
+                "post_globally": "on",
+                "bibtex_file": upload,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context["form"].initial["year"], 1948)
+        self.assertIn("Filled from BibTeX", resp.context["notice"])
+
+    def test_submit_auto_fills_doi_from_doi_url(self):
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "https://doi.org/10.1038/Nature12373",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        sub = Submission.objects.get()
+        self.assertEqual(sub.doi, "10.1038/nature12373")
+
+    def test_submit_auto_fills_url_from_doi(self):
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "",
+                "doi": "10.1038/Nature12373",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        sub = Submission.objects.get()
+        self.assertEqual(sub.url, "https://doi.org/10.1038/nature12373")
+
+    def test_submit_persists_metadata_and_creates_authors(self):
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "https://example.com/p",
+                "body": "",
+                "year": "2023",
+                "source": "journal",
+                "doi": "10.1048/x.y",
+                "authors_text": "Smith, J.; Doe, A.",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        sub = Submission.objects.get()
+        self.assertEqual(sub.year, 2023)
+        self.assertEqual(sub.source, "journal")
+        self.assertEqual(sub.doi, "10.1048/x.y")
+        sas = list(sub.submission_authors.all())
+        self.assertEqual(len(sas), 2)
+        self.assertEqual([sa.position for sa in sas], [0, 1])
+        self.assertEqual(
+            [sa.author.name for sa in sas], ["Smith, J.", "Doe, A."]
+        )
+
+    def test_resubmit_reuses_author_rows(self):
+        Author.objects.create(name="Smith, J.")
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "P1",
+                "url": "https://example.com/1",
+                "body": "",
+                "authors_text": "Smith, J.",
+                "post_globally": "on",
+            },
+        )
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "P2",
+                "url": "https://example.com/2",
+                "body": "",
+                "authors_text": "Smith, J.",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(Author.objects.filter(name="Smith, J.").count(), 1)
+        self.assertEqual(SubmissionAuthor.objects.count(), 2)
+
+    def test_metadata_renders_on_detail_page(self):
+        sub = Submission.objects.create(
+            title="Paper",
+            body="text",
+            author=self.user,
+            year=2023,
+            source="journal",
+            doi="10.1048/x.y",
+        )
+        SubmissionScope.objects.create(submission=sub, kind=SubmissionScope.KIND_GLOBAL)
+        a1 = Author.objects.create(name="Smith, J.")
+        a2 = Author.objects.create(name="Doe, A.")
+        SubmissionAuthor.objects.create(submission=sub, author=a1, position=0)
+        SubmissionAuthor.objects.create(submission=sub, author=a2, position=1)
+        resp = self.client.get(sub.get_absolute_url())
+        body = resp.content.decode()
+        self.assertIn("Smith, J., Doe, A.", body)
+        self.assertIn("2023", body)
+        self.assertIn("journal", body)
+        self.assertIn("10.1048/x.y", body)

@@ -24,15 +24,39 @@ class SubmissionForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         label="Also post to",
     )
+    bibtex_text = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={"rows": 4, "placeholder": "@article{...}"}
+        ),
+        label="BibTeX",
+    )
+    bibtex_file = forms.FileField(
+        required=False,
+        widget=forms.ClearableFileInput(attrs={"accept": ".bib,text/plain,text/x-bibtex"}),
+        label="or drop a .bib file",
+    )
+    authors_text = forms.CharField(
+        required=False,
+        label="Authors",
+        help_text="Separate with ';' or ' and '.",
+    )
 
     class Meta:
         model = Submission
-        fields = ("title", "url", "body")
+        fields = ("title", "url", "body", "year", "source")
         widgets = {
-            "url": forms.URLInput(attrs={"placeholder": "https://..."}),
+            "url": forms.URLInput(
+                attrs={"placeholder": "https://… or 10.xxxx/yyy"}
+            ),
             "body": forms.Textarea(attrs={"rows": 8}),
+            "year": forms.NumberInput(attrs={"placeholder": "2023"}),
+            "source": forms.TextInput(attrs={"placeholder": "journal, conference, …"}),
         }
-        help_texts = {"body": "Leave the URL blank for a text post."}
+        help_texts = {
+            "body": "Leave the URL blank for a text post.",
+            # "url": "DOI URLs auto-fetch metadata.",
+        }
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -41,11 +65,41 @@ class SubmissionForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        
+        url = cleaned.get("url")
+        body = cleaned.get("body")
+        
+        # If what was given in the URL field looks like a pure DOI, normalize it
+        if url:
+            from .citations import normalize_doi
+            norm_doi = normalize_doi(url)
+            if norm_doi:
+                cleaned["url"] = f"https://doi.org/{norm_doi}"
+                self.instance.url = cleaned["url"]
+
         if not cleaned.get("post_globally") and not cleaned.get("communities"):
             raise forms.ValidationError(
                 "Pick the global feed, one or more communities, or both."
             )
         return cleaned
+
+    def split_authors(self):
+        """Return ordered, deduped list of non-empty author names from authors_text."""
+        raw = (self.cleaned_data.get("authors_text") or "").strip()
+        if not raw:
+            return []
+        # Split on ';' or ' and ' (case-insensitive).
+        import re
+
+        parts = re.split(r"\s*;\s*|\s+and\s+", raw, flags=re.IGNORECASE)
+        seen = set()
+        result = []
+        for p in parts:
+            name = p.strip()
+            if name and name not in seen:
+                seen.add(name)
+                result.append(name)
+        return result
 
 
 GLOBAL_SCOPE_VALUE = "global"
@@ -114,7 +168,7 @@ class CommentForm(forms.ModelForm):
         for c in in_submission:
             choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
         for c in side_channel:
-            choices.append((_community_scope_value(c.id), f"c/{c.slug} (side channel)"))
+            choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
 
         self.fields["scope"].choices = choices
         if not choices:

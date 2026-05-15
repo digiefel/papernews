@@ -30,5 +30,6 @@
         | in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
       {% endif %}{% endfor %}
     </div>
+    {% include "core/_submission_meta.html" %}
   </div>
 </article>

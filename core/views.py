@@ -6,7 +6,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Prefetch
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -21,13 +21,16 @@ from .forms import (
     _community_scope_value,
     _parse_scope_value,
 )
+from .citations import extract_metadata, normalize_doi
 from .models import (
+    Author,
     Comment,
     CommentScope,
     CommentVote,
     Community,
     Save,
     Submission,
+    SubmissionAuthor,
     SubmissionScope,
     SubmissionVote,
 )
@@ -76,6 +79,13 @@ def _scopes_prefetch():
     )
 
 
+def _authors_prefetch():
+    return Prefetch(
+        "submission_authors",
+        queryset=SubmissionAuthor.objects.select_related("author"),
+    )
+
+
 def _attach_scope(comment):
     """Set comment.scope_value (string for form input) and comment.scope_community."""
     first_scope = next(iter(comment.scopes.all()), None)
@@ -107,7 +117,7 @@ def front_page(request):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")[:CANDIDATE_POOL]
     )
     candidates.sort(
@@ -123,7 +133,7 @@ def new_page(request):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")
     )
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
@@ -138,7 +148,7 @@ def submission_detail(request, pk):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch()),
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch()),
         pk=pk,
     )
 
@@ -217,7 +227,7 @@ def reply(request, sub_pk, comment_pk):
     submission = get_object_or_404(
         visible_submissions_for(request.user)
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch()),
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch()),
         pk=sub_pk,
     )
     parent = get_object_or_404(
@@ -306,27 +316,93 @@ def reply(request, sub_pk, comment_pk):
 
 @login_required
 def submit(request):
+    notice = None
     if request.method == "POST":
-        form = SubmissionForm(request.POST, user=request.user)
-        if form.is_valid():
-            with transaction.atomic():
-                submission = form.save(commit=False)
-                submission.author = request.user
-                submission.save()
-                if form.cleaned_data.get("post_globally"):
-                    SubmissionScope.objects.create(
-                        submission=submission, kind=SubmissionScope.KIND_GLOBAL
-                    )
-                for community in form.cleaned_data.get("communities", []):
-                    SubmissionScope.objects.create(
-                        submission=submission,
-                        kind=SubmissionScope.KIND_COMMUNITY,
-                        community=community,
-                    )
-            return redirect(submission.get_absolute_url())
+        action = request.POST.get("action", "submit")
+        if action == "extract":
+            # Priority: uploaded .bib file > pasted BibTeX > URL field (if DOI).
+            bibtex_text = request.POST.get("bibtex_text", "").strip()
+            url = request.POST.get("url", "").strip()
+            uploaded = request.FILES.get("bibtex_file")
+            source_text = None
+            if uploaded:
+                source_text = uploaded.read().decode("utf-8", errors="replace")
+            elif bibtex_text:
+                source_text = bibtex_text
+            elif url:
+                source_text = url
+            metadata, kind = extract_metadata(source_text or "")
+            initial = {
+                "title": request.POST.get("title", ""),
+                "url": url,
+                "body": request.POST.get("body", ""),
+                "year": request.POST.get("year", ""),
+                "source": request.POST.get("source", ""),
+                "doi": request.POST.get("doi", ""),
+                "authors_text": request.POST.get("authors_text", ""),
+                "bibtex_text": (
+                    source_text if uploaded else bibtex_text
+                ),
+                "post_globally": "post_globally" in request.POST,
+                "communities": request.POST.getlist("communities"),
+            }
+            if metadata:
+                for key in ("title", "year", "source"):
+                    if metadata.get(key):
+                        initial[key] = metadata[key]
+                if metadata.get("doi") and not initial.get("url"):
+                    initial["url"] = f"https://doi.org/{metadata['doi']}"
+                if metadata.get("authors"):
+                    initial["authors_text"] = "; ".join(metadata["authors"])
+                label = "DOI URL" if kind == "doi" else "BibTeX"
+                notice = f"Filled from {label} — review and edit."
+            elif source_text:
+                notice = "Couldn't extract anything — fill in manually."
+            form = SubmissionForm(initial=initial, user=request.user)
+        else:
+            form = SubmissionForm(request.POST, user=request.user)
+            if form.is_valid():
+                with transaction.atomic():
+                    submission = form.save(commit=False)
+                    submission.author = request.user
+                    if submission.url:
+                        doi = normalize_doi(submission.url)
+                        if doi:
+                            submission.doi = doi
+                    submission.save()
+                    if form.cleaned_data.get("post_globally"):
+                        SubmissionScope.objects.create(
+                            submission=submission, kind=SubmissionScope.KIND_GLOBAL
+                        )
+                    for community in form.cleaned_data.get("communities", []):
+                        SubmissionScope.objects.create(
+                            submission=submission,
+                            kind=SubmissionScope.KIND_COMMUNITY,
+                            community=community,
+                        )
+                    for position, name in enumerate(form.split_authors()):
+                        author, _ = Author.objects.get_or_create(name=name)
+                        SubmissionAuthor.objects.create(
+                            submission=submission, author=author, position=position
+                        )
+                return redirect(submission.get_absolute_url())
     else:
         form = SubmissionForm(user=request.user)
-    return render(request, "core/submit.html", {"form": form})
+    return render(request, "core/submit.html", {"form": form, "notice": notice})
+
+
+@require_POST
+def api_extract_metadata(request):
+    source_text = request.POST.get("text", "").strip()
+    uploaded = request.FILES.get("file")
+    if uploaded:
+        source_text = uploaded.read().decode("utf-8", errors="ignore")
+
+    metadata, kind = extract_metadata(source_text)
+    if not metadata:
+        return JsonResponse({"error": "unrecognized"}, status=400)
+    
+    return JsonResponse({"metadata": metadata})
 
 
 def communities_index(request):
@@ -351,7 +427,7 @@ def community_detail(request, slug):
         .filter(scopes__kind=SubmissionScope.KIND_COMMUNITY, scopes__community=community)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")
         .distinct()
     )
@@ -403,6 +479,12 @@ def saved_page(request):
         .select_related(
             "submission", "submission__author", "submission__author__profile"
         )
+        .prefetch_related(
+            Prefetch(
+                "submission__submission_authors",
+                queryset=SubmissionAuthor.objects.select_related("author"),
+            )
+        )
         .annotate(vote_count=Count("submission__votes"))
         .order_by("-created")
     )
@@ -427,6 +509,7 @@ def user_page(request, username):
         .filter(author=profile_user)
         .annotate(vote_count=Count("votes"))
         .select_related("author", "author__profile")
+        .prefetch_related(_authors_prefetch())
     )
     for submission in submissions:
         submission.item_type = "submission"
