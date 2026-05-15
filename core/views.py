@@ -21,7 +21,7 @@ from .forms import (
     _community_scope_value,
     _parse_scope_value,
 )
-from .citations import extract_metadata, normalize_doi
+from .citations import extract_metadata
 from .models import (
     Author,
     Comment,
@@ -322,10 +322,6 @@ def submit(request):
             with transaction.atomic():
                 submission = form.save(commit=False)
                 submission.author = request.user
-                if submission.url:
-                    doi = normalize_doi(submission.url)
-                    if doi:
-                        submission.doi = doi
                 submission.save()
                 if form.cleaned_data.get("post_globally"):
                     SubmissionScope.objects.create(

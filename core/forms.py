@@ -96,6 +96,14 @@ class SubmissionForm(forms.ModelForm):
             )
         return cleaned
 
+    def _post_clean(self):
+        # super() copies cleaned_data → self.instance. The DOI field isn't a
+        # form input (URL is canonical), so we derive it here from the now-
+        # assigned self.instance.url. Doing it in the form keeps every "URL
+        # changed → DOI updated" path consistent without the view caring.
+        super()._post_clean()
+        self.instance.doi = normalize_doi(self.instance.url) or ""
+
     def split_authors(self):
         """Return ordered, deduped list of non-empty author names from authors_text."""
         raw = (self.cleaned_data.get("authors_text") or "").strip()
