@@ -779,6 +779,39 @@ class SubmitMetadataTests(TestCase):
         sub = Submission.objects.get()
         self.assertEqual(sub.doi, "10.1038/nature12373")
 
+    def test_submit_normalizes_bare_doi_in_url_field(self):
+        # URL field accepts a bare DOI as shorthand; it gets canonicalized to
+        # a doi.org URL and the model's doi field is auto-populated on save.
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "10.1038/Nature12373",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        sub = Submission.objects.get()
+        self.assertEqual(sub.url, "https://doi.org/10.1038/nature12373")
+        self.assertEqual(sub.doi, "10.1038/nature12373")
+
+    def test_submit_rejects_garbage_in_url_field(self):
+        # Neither a valid URL nor a DOI — should be a form error, no submission.
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "not a url and not a doi",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Submission.objects.count(), 0)
+        self.assertIn("url", resp.context["form"].errors)
+
     def test_submit_persists_metadata_and_creates_authors(self):
         resp = self.client.post(
             "/submit/",
