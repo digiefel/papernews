@@ -23,6 +23,9 @@
         {{ submission.vote_count }} point{{ submission.vote_count|pluralize }}
         &middot; by {{ submission.author.username }}{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
         &middot; {{ submission.created|timesince }} ago
+        {% for scope in submission.scopes.all %}{% if scope.community_id %}
+          &middot; in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
+        {% endif %}{% endfor %}
       </div>
     </div>
   </article>
@@ -34,6 +37,12 @@
   {% if user.is_authenticated %}
     <form class="comment-form" method="post" action="{{ submission.get_absolute_url }}">
       {% csrf_token %}
+      {{ form.non_field_errors }}
+      <p class="reply-scope muted">
+        <label for="{{ form.scope.id_for_label }}">Reply in:</label>
+        {{ form.scope }}
+        {{ form.scope.errors }}
+      </p>
       {{ form.body }}
       {{ form.body.errors }}
       <button type="submit">add comment</button>

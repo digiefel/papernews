@@ -5,8 +5,42 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
-from .models import Comment, Profile, Save, Submission, SubmissionVote
+from .models import (
+    Comment,
+    CommentScope,
+    CommentVote,
+    Community,
+    CommunityMembership,
+    Profile,
+    Save,
+    Submission,
+    SubmissionScope,
+    SubmissionVote,
+)
 from .ranking import hot_score
+
+
+def make_submission(*, communities=(), global_=True, **kwargs):
+    """Create a submission with the chosen scopes. Defaults to global-only."""
+    s = Submission.objects.create(**kwargs)
+    if global_:
+        SubmissionScope.objects.create(submission=s, kind=SubmissionScope.KIND_GLOBAL)
+    for c in communities:
+        SubmissionScope.objects.create(
+            submission=s, kind=SubmissionScope.KIND_COMMUNITY, community=c
+        )
+    return s
+
+
+def make_comment(submission, *, communities=(), global_=True, **kwargs):
+    c = Comment.objects.create(submission=submission, **kwargs)
+    if global_:
+        CommentScope.objects.create(comment=c, kind=CommentScope.KIND_GLOBAL)
+    for community in communities:
+        CommentScope.objects.create(
+            comment=c, kind=CommentScope.KIND_COMMUNITY, community=community
+        )
+    return c
 
 
 class ModelTests(TestCase):
@@ -35,8 +69,8 @@ class ModelTests(TestCase):
             Submission(title="t", author=self.user).clean()
 
     def test_comment_clean_rejects_cross_submission_parent(self):
-        s1 = Submission.objects.create(title="a", body="x", author=self.user)
-        s2 = Submission.objects.create(title="b", body="y", author=self.user)
+        s1 = make_submission(title="a", body="x", author=self.user)
+        s2 = make_submission(title="b", body="y", author=self.user)
         parent = Comment.objects.create(submission=s1, author=self.user, body="p")
         with self.assertRaises(ValidationError):
             Comment(submission=s2, parent=parent, author=self.user, body="c").clean()
@@ -74,43 +108,75 @@ class ViewTests(TestCase):
     def test_submit_link_and_text(self):
         self.client.force_login(self.user)
         self.client.post(
-            "/submit/", {"title": "a link", "url": "https://example.com", "body": ""}
+            "/submit/",
+            {
+                "title": "a link",
+                "url": "https://example.com",
+                "body": "",
+                "post_globally": "on",
+            },
         )
         self.client.post(
-            "/submit/", {"title": "a text", "url": "", "body": "some words"}
+            "/submit/",
+            {
+                "title": "a text",
+                "url": "",
+                "body": "some words",
+                "post_globally": "on",
+            },
         )
         self.assertEqual(Submission.objects.count(), 2)
         link = Submission.objects.get(title="a link")
         text = Submission.objects.get(title="a text")
         self.assertEqual(link.kind, "link")
         self.assertEqual(text.kind, "text")
+        # Each got a global scope row
+        self.assertTrue(link.scopes.filter(kind="global").exists())
+        self.assertTrue(text.scopes.filter(kind="global").exists())
 
     def test_submit_invalid_both_fields(self):
         self.client.force_login(self.user)
         resp = self.client.post(
             "/submit/",
-            {"title": "x", "url": "https://example.com", "body": "text too"},
+            {
+                "title": "x",
+                "url": "https://example.com",
+                "body": "text too",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Submission.objects.count(), 0)
+
+    def test_submit_requires_at_least_one_scope(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/submit/",
+            {"title": "x", "url": "", "body": "hi"},  # no post_globally, no community
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(Submission.objects.count(), 0)
 
     def test_comment_requires_login_and_nests(self):
-        s = Submission.objects.create(title="a", body="x", author=self.user)
+        s = make_submission(title="a", body="x", author=self.user)
         resp = self.client.post(s.get_absolute_url(), {"body": "anon comment"})
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(Comment.objects.count(), 0)
 
         self.client.force_login(self.user)
-        self.client.post(s.get_absolute_url(), {"body": "top level"})
+        self.client.post(
+            s.get_absolute_url(), {"body": "top level", "scope": "global"}
+        )
         top = Comment.objects.get()
         self.client.post(
-            s.get_absolute_url(), {"body": "a reply", "parent_id": top.pk}
+            s.get_absolute_url(),
+            {"body": "a reply", "parent_id": top.pk, "scope": "global"},
         )
         reply = Comment.objects.get(body="a reply")
         self.assertEqual(reply.parent_id, top.pk)
 
     def test_voting_idempotent(self):
-        s = Submission.objects.create(title="a", body="x", author=self.user)
+        s = make_submission(title="a", body="x", author=self.user)
         self.client.force_login(self.user)
         url = f"/vote/submission/{s.pk}/"
         self.client.post(url)
@@ -118,14 +184,14 @@ class ViewTests(TestCase):
         self.assertEqual(SubmissionVote.objects.filter(submission=s).count(), 1)
 
     def test_new_page_orders_by_created(self):
-        old = Submission.objects.create(title="old", body="x", author=self.user)
-        new = Submission.objects.create(title="new", body="x", author=self.user)
+        old = make_submission(title="old", body="x", author=self.user)
+        new = make_submission(title="new", body="x", author=self.user)
         resp = self.client.get("/new/")
         items = list(resp.context["page_obj"])
         self.assertEqual([items[0].pk, items[1].pk], [new.pk, old.pk])
 
     def test_removed_submission_absent_from_listings(self):
-        Submission.objects.create(
+        make_submission(
             title="hidden", body="x", author=self.user, is_removed=True
         )
         resp = self.client.get("/new/")
@@ -200,3 +266,242 @@ class UserPageTests(TestCase):
 
         resp = self.client.get(f"/u/{self.user.username}/")
         self.assertEqual(len(resp.context["page_obj"]), 0)
+
+
+class VisibilityTests(TestCase):
+    def setUp(self):
+        self.author = User.objects.create_user("author", password="pw-test-12345")
+        self.member = User.objects.create_user("member", password="pw-test-12345")
+        self.outsider = User.objects.create_user("outsider", password="pw-test-12345")
+
+        self.public_community = Community.objects.create(
+            slug="ml-systems", name="ML Systems"
+        )
+        self.private_community = Community.objects.create(
+            slug="my-lab", name="My Lab", is_private=True
+        )
+        CommunityMembership.objects.create(
+            community=self.private_community, user=self.member
+        )
+        CommunityMembership.objects.create(
+            community=self.private_community, user=self.author
+        )
+
+    def test_home_shows_global_and_public_community_posts_to_anon(self):
+        # Anon "allowed to see" = global + public community posts.
+        global_s = make_submission(title="g", body="x", author=self.author)
+        public_only = make_submission(
+            title="public-only",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.public_community],
+        )
+        private_only = make_submission(
+            title="private-only",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.private_community],
+        )
+        resp = self.client.get("/")
+        titles = [s.title for s in resp.context["page_obj"]]
+        self.assertIn(global_s.title, titles)
+        self.assertIn(public_only.title, titles)
+        self.assertNotIn(private_only.title, titles)
+
+    def test_anon_sees_public_community_page(self):
+        make_submission(
+            title="hi-ml",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.public_community],
+        )
+        resp = self.client.get("/c/ml-systems/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "hi-ml")
+
+    def test_anon_404_on_private_community(self):
+        resp = self.client.get("/c/my-lab/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_outsider_404_on_private_community(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.get("/c/my-lab/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_outsider_does_not_see_private_submissions_on_home(self):
+        secret = make_submission(
+            title="secret-lab-note",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.private_community],
+        )
+        # outsider sees nothing
+        self.client.force_login(self.outsider)
+        resp = self.client.get("/")
+        titles = [s.title for s in resp.context["page_obj"]]
+        self.assertNotIn(secret.title, titles)
+        # member sees it
+        self.client.force_login(self.member)
+        resp = self.client.get("/")
+        titles = [s.title for s in resp.context["page_obj"]]
+        self.assertIn(secret.title, titles)
+
+    def test_outsider_404s_on_private_submission_detail(self):
+        secret = make_submission(
+            title="hidden",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.private_community],
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.get(secret.get_absolute_url())
+        self.assertEqual(resp.status_code, 404)
+
+    def test_private_scoped_comment_hidden_from_non_members(self):
+        global_s = make_submission(title="global-post", body="x", author=self.author)
+        public_comment = make_comment(
+            global_s, author=self.author, body="public hi"
+        )
+        private_comment = make_comment(
+            global_s,
+            author=self.author,
+            body="lab-only chatter",
+            global_=False,
+            communities=[self.private_community],
+        )
+        # outsider only sees the public comment
+        self.client.force_login(self.outsider)
+        resp = self.client.get(global_s.get_absolute_url())
+        self.assertContains(resp, public_comment.body)
+        self.assertNotContains(resp, private_comment.body)
+        # member sees both
+        self.client.force_login(self.member)
+        resp = self.client.get(global_s.get_absolute_url())
+        self.assertContains(resp, public_comment.body)
+        self.assertContains(resp, private_comment.body)
+
+    def test_communities_index_excludes_private_for_outsiders(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.get("/communities/")
+        self.assertContains(resp, "ml-systems")
+        self.assertNotContains(resp, "my-lab")
+
+    def test_communities_index_includes_private_for_members(self):
+        self.client.force_login(self.member)
+        resp = self.client.get("/communities/")
+        self.assertContains(resp, "my-lab")
+
+    def test_comment_scope_defaults_to_provenance_community(self):
+        # Submission lives in c/ml-systems and is global.
+        s = make_submission(
+            title="paper",
+            body="x",
+            author=self.author,
+            communities=[self.public_community],
+        )
+        # Member visits via ?in=ml-systems → dropdown default = c/ml-systems.
+        self.client.force_login(self.member)
+        resp = self.client.get(f"{s.get_absolute_url()}?in=ml-systems")
+        form = resp.context["form"]
+        self.assertEqual(form["scope"].value(), f"c{self.public_community.id}")
+        # Same submission, no ?in= → defaults to global.
+        resp = self.client.get(s.get_absolute_url())
+        self.assertEqual(resp.context["form"]["scope"].value(), "global")
+
+    def test_comment_scope_dropdown_excludes_global_for_private_only_post(self):
+        s = make_submission(
+            title="lab note",
+            body="x",
+            author=self.author,
+            global_=False,
+            communities=[self.private_community],
+        )
+        self.client.force_login(self.member)
+        resp = self.client.get(s.get_absolute_url())
+        choices = [v for v, _ in resp.context["form"]["scope"].field.choices]
+        self.assertNotIn("global", choices)
+        self.assertIn(f"c{self.private_community.id}", choices)
+
+    def test_comment_scope_dropdown_offers_side_channel(self):
+        # Global-only submission. Member should be offered c/my-lab as a side channel.
+        s = make_submission(title="open paper", body="x", author=self.author)
+        self.client.force_login(self.member)
+        resp = self.client.get(s.get_absolute_url())
+        labels = [label for _, label in resp.context["form"]["scope"].field.choices]
+        self.assertTrue(any("side channel" in lbl for lbl in labels))
+
+    def test_comment_side_channel_post_creates_private_scope(self):
+        s = make_submission(title="open paper", body="x", author=self.author)
+        self.client.force_login(self.member)
+        self.client.post(
+            s.get_absolute_url(),
+            {"body": "lab whisper", "scope": f"c{self.private_community.id}"},
+        )
+        c = Comment.objects.get(body="lab whisper")
+        scopes = [(sc.kind, sc.community_id) for sc in c.scopes.all()]
+        self.assertEqual(scopes, [("community", self.private_community.id)])
+
+    def test_nested_reply_inherits_parent_scope(self):
+        # Parent comment is scoped only to c/my-lab on a global submission.
+        s = make_submission(title="open paper", body="x", author=self.author)
+        parent = make_comment(
+            s,
+            author=self.author,
+            body="lab whisper",
+            global_=False,
+            communities=[self.private_community],
+        )
+        self.client.force_login(self.member)
+        # The rendered reply form must carry the parent's scope so the user
+        # can't accidentally globalize a side-channel thread.
+        resp = self.client.get(s.get_absolute_url())
+        self.assertContains(
+            resp,
+            f'name="scope" value="c{self.private_community.id}"',
+        )
+        # POSTing a reply with that scope succeeds and inherits.
+        self.client.post(
+            s.get_absolute_url(),
+            {
+                "body": "agreed",
+                "parent_id": parent.pk,
+                "scope": f"c{self.private_community.id}",
+            },
+        )
+        reply = Comment.objects.get(body="agreed")
+        self.assertEqual(reply.parent_id, parent.pk)
+        scopes = [(sc.kind, sc.community_id) for sc in reply.scopes.all()]
+        self.assertEqual(scopes, [("community", self.private_community.id)])
+
+    def test_community_feed_discuss_link_carries_in_param(self):
+        make_submission(
+            title="cross",
+            body="x",
+            author=self.author,
+            communities=[self.public_community],
+        )
+        resp = self.client.get("/c/ml-systems/")
+        self.assertContains(resp, "?in=ml-systems")
+        # Home feed has no community context.
+        resp = self.client.get("/")
+        self.assertNotContains(resp, "?in=")
+
+    def test_submit_to_private_you_dont_belong_to_fails(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.post(
+            "/submit/",
+            {
+                "title": "intruder",
+                "url": "",
+                "body": "hi",
+                "communities": [self.private_community.pk],
+            },
+        )
+        # Form should reject the choice (queryset is restricted to writable communities)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Submission.objects.filter(title="intruder").exists())

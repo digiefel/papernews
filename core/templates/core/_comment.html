@@ -15,6 +15,7 @@
     <form class="reply" method="post" action="{{ submission.get_absolute_url }}">
       {% csrf_token %}
       <input type="hidden" name="parent_id" value="{{ comment.pk }}">
+      <input type="hidden" name="scope" value="{{ comment.scope_value }}">
       <textarea name="body" rows="2" placeholder="reply..."></textarea>
       <button type="submit">reply</button>
     </form>

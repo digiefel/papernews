@@ -8,7 +8,33 @@
   <form class="stacked" method="post">
     {% csrf_token %}
     {{ form.non_field_errors }}
-    {{ form.as_p }}
+    <p>
+      <label for="{{ form.title.id_for_label }}">Title</label>
+      {{ form.title }}
+      {{ form.title.errors }}
+    </p>
+    <p>
+      <label for="{{ form.url.id_for_label }}">URL</label>
+      {{ form.url }}
+      {{ form.url.errors }}
+    </p>
+    <p>
+      <label for="{{ form.body.id_for_label }}">Text</label>
+      {{ form.body }}
+      <span class="muted">{{ form.body.help_text }}</span>
+      {{ form.body.errors }}
+    </p>
+    <fieldset class="scope-picker">
+      <legend>Where to post</legend>
+      <p>
+        <label>{{ form.post_globally }} {{ form.post_globally.label }}</label>
+      </p>
+      {% if form.communities.field.queryset.exists %}
+        <p class="muted">{{ form.communities.label }}:</p>
+        {{ form.communities }}
+      {% endif %}
+      {{ form.communities.errors }}
+    </fieldset>
     <button type="submit">submit</button>
   </form>
 {% endblock %}

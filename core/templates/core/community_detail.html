@@ -1,0 +1,27 @@
+{% extends "core/base.html" %}
+
+{% block title %}c/{{ community.slug }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <header class="community-header">
+    <h1>c/{{ community.slug }}</h1>
+    <p class="muted">{{ community.name }}{% if community.is_private %} &middot; private{% endif %}</p>
+    {% if community.description %}
+      <p>{{ community.description }}</p>
+    {% endif %}
+  </header>
+
+  {% for submission in page_obj %}
+    {% include "core/_submission_row.html" with community_context=community.slug %}
+  {% empty %}
+    <p class="muted">No submissions in this community yet.</p>
+  {% endfor %}
+
+  {% if page_obj.has_other_pages %}
+    <nav class="pager muted">
+      {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">&larr; prev</a>{% endif %}
+      <span>page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">next &rarr;</a>{% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}

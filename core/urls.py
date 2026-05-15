@@ -13,4 +13,6 @@ urlpatterns = [
     path("saved/", views.saved_page, name="saved"),
     path("u/<str:username>/", views.user_page, name="user_page"),
     path("signup/", views.signup, name="signup"),
+    path("communities/", views.communities_index, name="communities"),
+    path("c/<slug:slug>/", views.community_detail, name="community_detail"),
 ]
