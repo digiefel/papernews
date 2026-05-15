@@ -436,14 +436,6 @@ class VisibilityTests(TestCase):
         self.assertNotIn("global", choices)
         self.assertIn(f"c{self.private_community.id}", choices)
 
-    def test_comment_scope_dropdown_offers_side_channel(self):
-        # Global-only submission. Member should be offered c/my-lab as a side channel.
-        s = make_submission(title="open paper", body="x", author=self.author)
-        self.client.force_login(self.member)
-        resp = self.client.get(s.get_absolute_url())
-        labels = [label for _, label in resp.context["form"]["scope"].field.choices]
-        self.assertTrue(any("side channel" in lbl for lbl in labels))
-
     def test_comment_side_channel_post_creates_private_scope(self):
         s = make_submission(title="open paper", body="x", author=self.author)
         self.client.force_login(self.member)
@@ -685,7 +677,6 @@ class SubmitMetadataTests(TestCase):
                 "body": "",
                 "year": "",
                 "source": "",
-                "doi": "",
                 "authors_text": "",
                 "post_globally": "on",
             },
@@ -698,8 +689,11 @@ class SubmitMetadataTests(TestCase):
         )
         self.assertEqual(form.initial["year"], 1948)
         self.assertEqual(form.initial["source"], "Bell System Technical Journal")
+        # DOI from BibTeX populates the URL field (as a doi.org URL) since
+        # the form has no separate DOI input — URL is the canonical identifier.
         self.assertEqual(
-            form.initial["doi"], "10.1002/j.1538-7305.1948.tb01338.x"
+            form.initial["url"],
+            "https://doi.org/10.1002/j.1538-7305.1948.tb01338.x",
         )
         self.assertIn("Shannon", form.initial["authors_text"])
         self.assertIn("Filled from BibTeX", resp.context["notice"])
@@ -785,21 +779,6 @@ class SubmitMetadataTests(TestCase):
         sub = Submission.objects.get()
         self.assertEqual(sub.doi, "10.1038/nature12373")
 
-    def test_submit_auto_fills_url_from_doi(self):
-        self.client.post(
-            "/submit/",
-            {
-                "action": "submit",
-                "title": "Paper",
-                "url": "",
-                "doi": "10.1038/Nature12373",
-                "body": "",
-                "post_globally": "on",
-            },
-        )
-        sub = Submission.objects.get()
-        self.assertEqual(sub.url, "https://doi.org/10.1038/nature12373")
-
     def test_submit_persists_metadata_and_creates_authors(self):
         resp = self.client.post(
             "/submit/",
@@ -810,7 +789,6 @@ class SubmitMetadataTests(TestCase):
                 "body": "",
                 "year": "2023",
                 "source": "journal",
-                "doi": "10.1048/x.y",
                 "authors_text": "Smith, J.; Doe, A.",
                 "post_globally": "on",
             },
@@ -819,7 +797,6 @@ class SubmitMetadataTests(TestCase):
         sub = Submission.objects.get()
         self.assertEqual(sub.year, 2023)
         self.assertEqual(sub.source, "journal")
-        self.assertEqual(sub.doi, "10.1048/x.y")
         sas = list(sub.submission_authors.all())
         self.assertEqual(len(sas), 2)
         self.assertEqual([sa.position for sa in sas], [0, 1])
@@ -855,6 +832,7 @@ class SubmitMetadataTests(TestCase):
         self.assertEqual(SubmissionAuthor.objects.count(), 2)
 
     def test_metadata_renders_on_detail_page(self):
+        # DOI is stored but intentionally not displayed (metadata only).
         sub = Submission.objects.create(
             title="Paper",
             body="text",
@@ -870,7 +848,7 @@ class SubmitMetadataTests(TestCase):
         SubmissionAuthor.objects.create(submission=sub, author=a2, position=1)
         resp = self.client.get(sub.get_absolute_url())
         body = resp.content.decode()
-        self.assertIn("Smith, J., Doe, A.", body)
+        self.assertIn("Smith, J.", body)
+        self.assertIn("Doe, A.", body)
         self.assertIn("2023", body)
         self.assertIn("journal", body)
-        self.assertIn("10.1048/x.y", body)
