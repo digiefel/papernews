@@ -15,18 +15,20 @@
       {% endif %}
     </div>
     <div class="subtext muted">
-      {{ submission.vote_count }} point{{ submission.vote_count|pluralize }}
-      &middot; by {{ submission.author.username }}{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
-      &middot; {{ submission.created|timesince }} ago
-      &middot; <a href="{{ submission.get_absolute_url }}">discuss</a>
+      by <span class="username">{{ submission.author.username }}</span>{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
+      {{ submission.created|timesince }} ago
+      | <a href="{{ submission.get_absolute_url }}{% if community_context %}?in={{ community_context }}{% endif %}">discuss</a>
       {% if user.is_authenticated %}
-        &middot;
+        |
         <form class="inline" method="post" action="{% url 'toggle_save' submission.pk %}">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <button type="submit" class="linkbtn">{% if submission.is_saved %}unsave{% else %}save{% endif %}</button>
         </form>
       {% endif %}
+      {% for scope in submission.scopes.all %}{% if scope.community_id %}
+        | in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
+      {% endif %}{% endfor %}
     </div>
   </div>
 </article>

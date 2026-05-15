@@ -4,16 +4,39 @@ from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
-from django.db.models import Count
+from django.db import transaction
+from django.db.models import Count, Prefetch
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from .forms import CommentForm, SignupForm, SubmissionForm
-from .models import Comment, CommentVote, Save, Submission, SubmissionVote
+from .forms import (
+    GLOBAL_SCOPE_VALUE,
+    CommentForm,
+    SignupForm,
+    SubmissionForm,
+    _community_scope_value,
+    _parse_scope_value,
+)
+from .models import (
+    Comment,
+    CommentScope,
+    CommentVote,
+    Community,
+    Save,
+    Submission,
+    SubmissionScope,
+    SubmissionVote,
+)
 from .ranking import hot_score
+from .visibility import (
+    visible_comments_for,
+    visible_communities_for,
+    visible_submissions_for,
+)
 
 User = get_user_model()
 
@@ -23,7 +46,6 @@ MAX_INDENT = 6
 
 
 def _safe_next(request, fallback="home"):
-    """Resolve a redirect target from ?next=, rejecting off-site URLs (open-redirect guard)."""
     nxt = request.POST.get("next") or request.GET.get("next")
     if nxt and url_has_allowed_host_and_scheme(
         nxt, allowed_hosts={request.get_host()}, require_https=request.is_secure()
@@ -47,12 +69,45 @@ def _mark_saved(submissions, user):
         s.is_saved = s.id in saved_ids
 
 
+def _scopes_prefetch():
+    return Prefetch(
+        "scopes",
+        queryset=SubmissionScope.objects.select_related("community"),
+    )
+
+
+def _attach_scope(comment):
+    """Set comment.scope_value (string for form input) and comment.scope_community."""
+    first_scope = next(iter(comment.scopes.all()), None)
+    if first_scope is None or first_scope.kind == CommentScope.KIND_GLOBAL:
+        comment.scope_value = GLOBAL_SCOPE_VALUE
+        comment.scope_community = None
+    else:
+        comment.scope_value = _community_scope_value(first_scope.community_id)
+        comment.scope_community = first_scope.community
+
+
+def _default_scope_from_provenance(request, submission):
+    """If ?in=<slug> matches a community the user can write in, use it; else None."""
+    slug = request.GET.get("in", "").strip()
+    if not slug:
+        return None
+    community = (
+        visible_communities_for(request.user).filter(slug=slug).first()
+    )
+    if community is None:
+        return None
+    return _community_scope_value(community.id)
+
+
+
 def front_page(request):
     now = timezone.now()
     candidates = list(
-        Submission.objects.visible()
-        .annotate(vote_count=Count("votes"))
+        visible_submissions_for(request.user)
+        .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch())
         .order_by("-created")[:CANDIDATE_POOL]
     )
     candidates.sort(
@@ -65,57 +120,85 @@ def front_page(request):
 
 def new_page(request):
     qs = (
-        Submission.objects.visible()
-        .annotate(vote_count=Count("votes"))
+        visible_submissions_for(request.user)
+        .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch())
         .order_by("-created")
     )
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
     _mark_saved(page.object_list, request.user)
-    return render(request, "core/listing.html", {"page_obj": page, "page_title": "New"})
+    return render(
+        request, "core/listing.html", {"page_obj": page, "page_title": "New"}
+    )
 
 
 def submission_detail(request, pk):
     submission = get_object_or_404(
-        Submission.objects.visible()
-        .annotate(vote_count=Count("votes"))
-        .select_related("author", "author__profile"),
+        visible_submissions_for(request.user)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch()),
         pk=pk,
     )
+
+    # Provenance: if the user reached this page from a community feed, the link
+    # carries ?in=<slug>. Use it to seed the comment scope default.
+    default_scope = _default_scope_from_provenance(request, submission)
 
     if request.method == "POST":
         if not request.user.is_authenticated:
             return redirect_to_login(request.get_full_path())
-        form = CommentForm(request.POST)
+        form = CommentForm(
+            request.POST,
+            submission=submission,
+            user=request.user,
+            default_scope=default_scope,
+        )
         if form.is_valid():
-            comment = form.save(commit=False)
-            comment.author = request.user
-            comment.submission = submission
-            parent_id = request.POST.get("parent_id")
-            if parent_id:
-                comment.parent = get_object_or_404(
-                    Comment, pk=parent_id, submission=submission
-                )
-            comment.save()
+            with transaction.atomic():
+                comment = form.save(commit=False)
+                comment.author = request.user
+                comment.submission = submission
+                comment.save()
+                kind, community_id = _parse_scope_value(form.cleaned_data["scope"])
+                if kind == "global":
+                    CommentScope.objects.create(
+                        comment=comment, kind=CommentScope.KIND_GLOBAL
+                    )
+                else:
+                    CommentScope.objects.create(
+                        comment=comment,
+                        kind=CommentScope.KIND_COMMUNITY,
+                        community_id=community_id,
+                    )
             return redirect(comment.get_absolute_url())
     else:
-        form = CommentForm()
+        form = CommentForm(
+            submission=submission,
+            user=request.user,
+            default_scope=default_scope,
+        )
 
-    # Fetch the whole thread in one query and assemble the tree in memory, so the
-    # recursive template render touches no database.
     comments = list(
-        submission.comments.filter(is_removed=False)
-        .annotate(vote_count=Count("votes"))
+        visible_comments_for(request.user, submission)
+        .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
+        .prefetch_related(
+            Prefetch(
+                "scopes",
+                queryset=CommentScope.objects.select_related("community"),
+            )
+        )
     )
     by_parent = defaultdict(list)
     for c in comments:
         by_parent[c.parent_id].append(c)
     for c in comments:
         c.children_list = by_parent[c.id]
+        _attach_scope(c)
     roots = by_parent[None]
 
-    # Precompute indentation depth; capped so deep threads don't run off the page.
     stack = [(c, 0) for c in roots]
     while stack:
         comment, depth = stack.pop()
@@ -130,23 +213,162 @@ def submission_detail(request, pk):
 
 
 @login_required
+def reply(request, sub_pk, comment_pk):
+    submission = get_object_or_404(
+        visible_submissions_for(request.user)
+        .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch()),
+        pk=sub_pk,
+    )
+    parent = get_object_or_404(
+        visible_comments_for(request.user, submission)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(
+            Prefetch(
+                "scopes",
+                queryset=CommentScope.objects.select_related("community"),
+            )
+        ),
+        pk=comment_pk,
+    )
+    _attach_scope(parent)
+
+    # Siblings of the parent: comments visible to this user at the same depth
+    # under the same grandparent (or top-level if the parent itself is root).
+    sibling_qs = (
+        visible_comments_for(request.user, submission)
+        .filter(parent_id=parent.parent_id)
+        .exclude(pk=parent.pk)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(
+            Prefetch(
+                "scopes",
+                queryset=CommentScope.objects.select_related("community"),
+            )
+        )
+    )
+    siblings = list(sibling_qs)
+    for s in siblings:
+        s.indent = 0
+        s.children_list = []
+        _attach_scope(s)
+    parent.indent = 0
+    parent.children_list = []
+
+    if request.method == "POST":
+        # Reuse the same scope rules as inline replies: inherited from parent,
+        # passed as a hidden field. Validate via the same CommentForm.
+        form = CommentForm(
+            request.POST,
+            submission=submission,
+            user=request.user,
+            default_scope=parent.scope_value,
+        )
+        if form.is_valid():
+            with transaction.atomic():
+                comment = form.save(commit=False)
+                comment.author = request.user
+                comment.submission = submission
+                comment.parent = parent
+                comment.save()
+                kind, community_id = _parse_scope_value(form.cleaned_data["scope"])
+                if kind == "global":
+                    CommentScope.objects.create(
+                        comment=comment, kind=CommentScope.KIND_GLOBAL
+                    )
+                else:
+                    CommentScope.objects.create(
+                        comment=comment,
+                        kind=CommentScope.KIND_COMMUNITY,
+                        community_id=community_id,
+                    )
+            return redirect(comment.get_absolute_url())
+    else:
+        form = CommentForm(
+            submission=submission,
+            user=request.user,
+            default_scope=parent.scope_value,
+        )
+
+    return render(
+        request,
+        "core/reply.html",
+        {
+            "submission": submission,
+            "parent": parent,
+            "siblings": siblings,
+            "form": form,
+        },
+    )
+
+
+@login_required
 def submit(request):
     if request.method == "POST":
-        form = SubmissionForm(request.POST)
+        form = SubmissionForm(request.POST, user=request.user)
         if form.is_valid():
-            submission = form.save(commit=False)
-            submission.author = request.user
-            submission.save()
+            with transaction.atomic():
+                submission = form.save(commit=False)
+                submission.author = request.user
+                submission.save()
+                if form.cleaned_data.get("post_globally"):
+                    SubmissionScope.objects.create(
+                        submission=submission, kind=SubmissionScope.KIND_GLOBAL
+                    )
+                for community in form.cleaned_data.get("communities", []):
+                    SubmissionScope.objects.create(
+                        submission=submission,
+                        kind=SubmissionScope.KIND_COMMUNITY,
+                        community=community,
+                    )
             return redirect(submission.get_absolute_url())
     else:
-        form = SubmissionForm()
+        form = SubmissionForm(user=request.user)
     return render(request, "core/submit.html", {"form": form})
+
+
+def communities_index(request):
+    communities = (
+        visible_communities_for(request.user)
+        .annotate(submission_count=Count("submissionscope__submission", distinct=True))
+        .order_by("slug")
+    )
+    return render(
+        request,
+        "core/communities_list.html",
+        {"communities": communities},
+    )
+
+
+def community_detail(request, slug):
+    community = visible_communities_for(request.user).filter(slug=slug).first()
+    if community is None:
+        raise Http404
+    qs = (
+        visible_submissions_for(request.user)
+        .filter(scopes__kind=SubmissionScope.KIND_COMMUNITY, scopes__community=community)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch())
+        .order_by("-created")
+        .distinct()
+    )
+    page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
+    return render(
+        request,
+        "core/community_detail.html",
+        {"community": community, "page_obj": page},
+    )
 
 
 @require_POST
 @login_required
 def vote_submission(request, pk):
-    submission = get_object_or_404(Submission.objects.visible(), pk=pk)
+    submission = get_object_or_404(
+        visible_submissions_for(request.user), pk=pk
+    )
     SubmissionVote.objects.get_or_create(submission=submission, user=request.user)
     return redirect(_safe_next(request))
 
@@ -155,6 +377,9 @@ def vote_submission(request, pk):
 @login_required
 def vote_comment(request, pk):
     comment = get_object_or_404(Comment, pk=pk, is_removed=False)
+    # Guard: don't allow voting on a comment you can't see.
+    if not visible_comments_for(request.user, comment.submission).filter(pk=pk).exists():
+        raise Http404
     CommentVote.objects.get_or_create(comment=comment, user=request.user)
     return redirect(_safe_next(request))
 

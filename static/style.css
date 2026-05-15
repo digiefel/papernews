@@ -56,7 +56,7 @@ header nav .spacer {
 /* Submission rows */
 .row {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 0.4rem;
   margin: 0.5rem 0;
 }
@@ -79,9 +79,18 @@ header nav .spacer {
   margin-top: 0.1rem;
 }
 
+.subtext .username {
+  font-weight: bold;
+}
+
 /* Voting */
 .vote {
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 1.4rem;
 }
 
 .upvote {
@@ -125,6 +134,18 @@ form.inline {
   margin: 0.75rem 0;
 }
 
+.comment-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.comment-main,
+.row-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .comment-body,
 .post-body {
   margin: 0.25rem 0;
@@ -141,9 +162,38 @@ form.stacked {
   margin: 0.4rem 0;
 }
 
+.comment-form .reply-scope {
+  margin: 0 0 0.3rem;
+}
+
+.reply-link {
+  font-size: 0.85em;
+  margin-top: 0.25rem;
+}
+
+.reply-link a {
+  color: #828282;
+  text-decoration: underline;
+}
+
+.reply-link a:hover {
+  color: #ff6600;
+}
+
+.thread-divider {
+  border: none;
+  border-top: 1px solid #e0dcd0;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.siblings-label {
+  font-size: 0.85em;
+  margin: 0 0 0.25rem;
+}
+
 .reply textarea,
 .comment-form textarea,
-form.stacked input,
+form.stacked input:not([type="checkbox"]):not([type="radio"]),
 form.stacked textarea {
   display: block;
   width: 100%;
@@ -151,6 +201,21 @@ form.stacked textarea {
   box-sizing: border-box;
   font: inherit;
   margin-bottom: 0.3rem;
+}
+
+.scope-picker {
+  padding: 0 0.5rem 0.5rem;
+}
+
+.scope-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.scope-picker input[type="checkbox"] {
+  width: auto;
+  margin: 0;
 }
 
 form.stacked p {

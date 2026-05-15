@@ -1,0 +1,34 @@
+{% extends "core/base.html" %}
+{% load markup %}
+
+{% block title %}Reply &middot; Papernews{% endblock %}
+
+{% block content %}
+  {% include "core/_comment.html" with comment=parent hide_reply=True show_on_link=True %}
+
+  <form class="comment-form" method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <p class="reply-scope muted">
+      {% if parent.scope_community %}
+        Reply in <a href="{{ parent.scope_community.get_absolute_url }}">c/{{ parent.scope_community.slug }}</a>
+      {% else %}
+        Reply globally
+      {% endif %}
+      <input type="hidden" name="scope" value="{{ parent.scope_value }}">
+    </p>
+    {{ form.body }}
+    {{ form.body.errors }}
+    <button type="submit">reply</button>
+  </form>
+
+  {% if siblings %}
+    <hr class="thread-divider">
+    <p class="muted siblings-label">other replies</p>
+    <section class="comments">
+      {% for sibling in siblings %}
+        {% include "core/_comment.html" with comment=sibling %}
+      {% endfor %}
+    </section>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "core/base.html" %}
+
+{% block title %}Communities &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>Communities</h1>
+  <ul class="communities">
+    {% for community in communities %}
+      <li>
+        <a href="{{ community.get_absolute_url }}">c/{{ community.slug }}</a>
+        <span class="muted">{{ community.name }}{% if community.is_private %} &middot; private{% endif %} &middot; {{ community.submission_count }} post{{ community.submission_count|pluralize }}</span>
+        {% if community.description %}
+          <div class="muted">{{ community.description }}</div>
+        {% endif %}
+      </li>
+    {% empty %}
+      <li class="muted">No communities yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
