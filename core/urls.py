@@ -6,6 +6,7 @@ urlpatterns = [
     path("", views.front_page, name="home"),
     path("new/", views.new_page, name="new"),
     path("submit/", views.submit, name="submit"),
+    path("api/extract-metadata/", views.api_extract_metadata, name="api_extract_metadata"),
     path("item/<int:pk>/", views.submission_detail, name="submission_detail"),
     path("item/<int:sub_pk>/reply/<int:comment_pk>/", views.reply, name="reply"),
     path("vote/submission/<int:pk>/", views.vote_submission, name="vote_submission"),

@@ -52,7 +52,7 @@ A submission is not necessarily a paper. It can be a link, text post, manual, da
 
 A comment is discussion attached to a submission or another comment.
 
-A community is a user-facing scoped view/feed, such as `/c/ml-systems`, `/c/neuroscience`, `/c/my-lab`, or `/c/nature`.
+A community is a user-facing scoped view/feed, such as `/c/solid-state-physics`, `/c/neuroscience`, `/c/my-lab`, or `/c/some-journal`.
 
 A scope is the internal technical layer that says where a submission appears or who can see it.
 
@@ -143,10 +143,10 @@ A community is a scoped feed/view.
 
 Examples:
 
-`/c/ml-systems`
+`/c/solid-state-physics`
 `/c/neuroscience`
 `/c/my-lab`
-`/c/nature`
+`/c/some-journal`
 
 A community can be public or private.
 

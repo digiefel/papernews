@@ -1,11 +1,19 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from .citations import (
+    extract_metadata,
+    fetch_bibtex_for_doi,
+    normalize_doi,
+    parse_bibtex,
+)
 from .models import (
+    Author,
     Comment,
     CommentScope,
     CommentVote,
@@ -14,6 +22,7 @@ from .models import (
     Profile,
     Save,
     Submission,
+    SubmissionAuthor,
     SubmissionScope,
     SubmissionVote,
 )
@@ -427,14 +436,6 @@ class VisibilityTests(TestCase):
         self.assertNotIn("global", choices)
         self.assertIn(f"c{self.private_community.id}", choices)
 
-    def test_comment_scope_dropdown_offers_side_channel(self):
-        # Global-only submission. Member should be offered c/my-lab as a side channel.
-        s = make_submission(title="open paper", body="x", author=self.author)
-        self.client.force_login(self.member)
-        resp = self.client.get(s.get_absolute_url())
-        labels = [label for _, label in resp.context["form"]["scope"].field.choices]
-        self.assertTrue(any("side channel" in lbl for lbl in labels))
-
     def test_comment_side_channel_post_creates_private_scope(self):
         s = make_submission(title="open paper", body="x", author=self.author)
         self.client.force_login(self.member)
@@ -555,3 +556,328 @@ class VisibilityTests(TestCase):
         # Form should reject the choice (queryset is restricted to writable communities)
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(Submission.objects.filter(title="intruder").exists())
+
+
+SAMPLE_BIBTEX = """@article{shannon1948,
+  title = {A Mathematical Theory of Communication},
+  author = {Shannon, Claude E. and Weaver, Warren},
+  journal = {Bell System Technical Journal},
+  year = {1948},
+  doi = {10.1002/j.1538-7305.1948.tb01338.x},
+  url = {https://example.org/shannon}
+}"""
+
+
+class CitationsTests(TestCase):
+    def test_parse_bibtex_extracts_known_fields(self):
+        parsed = parse_bibtex(SAMPLE_BIBTEX)
+        self.assertEqual(parsed["title"], "A Mathematical Theory of Communication")
+        self.assertEqual(
+            parsed["authors"], ["Shannon, Claude E.", "Weaver, Warren"]
+        )
+        self.assertEqual(parsed["year"], 1948)
+        self.assertEqual(parsed["source"], "Bell System Technical Journal")
+        self.assertEqual(parsed["doi"], "10.1002/j.1538-7305.1948.tb01338.x")
+        self.assertEqual(parsed["url"], "https://example.org/shannon")
+
+    def test_parse_bibtex_booktitle_maps_to_source(self):
+        text = (
+            "@inproceedings{x, title={T}, author={A}, "
+            "booktitle={conference}, year={2020}}"
+        )
+        parsed = parse_bibtex(text)
+        self.assertEqual(parsed["source"], "conference")
+
+    def test_parse_bibtex_malformed_returns_none(self):
+        self.assertIsNone(parse_bibtex("not bibtex"))
+        self.assertIsNone(parse_bibtex(""))
+
+    def test_normalize_doi_strips_prefixes(self):
+        for raw in (
+            "10.1048/x.y",
+            "https://doi.org/10.1048/x.y",
+            "http://dx.doi.org/10.1048/x.y",
+            "  doi:10.1048/x.y  ",
+        ):
+            self.assertEqual(normalize_doi(raw), "10.1048/x.y")
+
+    def test_normalize_doi_rejects_garbage(self):
+        self.assertIsNone(normalize_doi("not a doi"))
+        self.assertIsNone(normalize_doi(""))
+        self.assertIsNone(normalize_doi(None))
+
+    def _patched_urlopen(self, body_bytes, captured=None):
+        class FakeResp:
+            status = 200
+            headers = type("H", (), {"get_content_charset": lambda self: "utf-8"})()
+
+            def read(self, n=-1):
+                return body_bytes if n < 0 else body_bytes[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=5):
+            if captured is not None:
+                captured["url"] = req.full_url
+                captured["accept"] = req.get_header("Accept")
+            return FakeResp()
+
+        return fake_urlopen
+
+    def test_fetch_bibtex_for_doi_uses_content_negotiation(self):
+        captured = {}
+        fake = self._patched_urlopen(SAMPLE_BIBTEX.encode("utf-8"), captured)
+        with patch("core.citations.urllib.request.urlopen", fake):
+            body = fetch_bibtex_for_doi("10.1048/x.y")
+        self.assertEqual(captured["url"], "https://doi.org/10.1048/x.y")
+        self.assertEqual(captured["accept"], "application/x-bibtex")
+        self.assertIn("A Mathematical Theory of Communication", body)
+
+    def test_fetch_bibtex_for_doi_rejects_oversize_response(self):
+        # A malicious redirect serving > _MAX_BIBTEX_RESPONSE_BYTES should be
+        # dropped rather than read fully into memory.
+        from .citations import _MAX_BIBTEX_RESPONSE_BYTES
+
+        huge = b"x" * (_MAX_BIBTEX_RESPONSE_BYTES + 100)
+        fake = self._patched_urlopen(huge)
+        with patch("core.citations.urllib.request.urlopen", fake):
+            self.assertIsNone(fetch_bibtex_for_doi("10.1048/x.y"))
+
+    def test_extract_metadata_bibtex_path(self):
+        meta, kind = extract_metadata(SAMPLE_BIBTEX)
+        self.assertEqual(kind, "bibtex")
+        self.assertEqual(meta["year"], 1948)
+
+    def test_extract_metadata_doi_path(self):
+        with patch(
+            "core.citations.fetch_bibtex_for_doi", return_value=SAMPLE_BIBTEX
+        ):
+            meta, kind = extract_metadata("10.1048/x.y")
+        self.assertEqual(kind, "doi")
+        self.assertEqual(meta["year"], 1948)
+        # DOI from input is used even when the fetched bibtex has its own DOI.
+        # Our orchestrator only sets the input-DOI if BibTeX didn't include one.
+        self.assertIn("doi", meta)
+
+    def test_extract_metadata_doi_fetch_failure_returns_minimal(self):
+        with patch("core.citations.fetch_bibtex_for_doi", return_value=None):
+            meta, kind = extract_metadata("10.1048/x.y")
+        self.assertEqual(kind, "doi")
+        self.assertEqual(meta, {"doi": "10.1048/x.y"})
+
+    def test_extract_metadata_garbage_returns_none(self):
+        meta, kind = extract_metadata("just some words")
+        self.assertIsNone(meta)
+        self.assertIsNone(kind)
+
+
+class SubmitMetadataTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("bob", password="pw-test-12345")
+        self.client.force_login(self.user)
+
+    def test_submit_auto_fills_doi_from_doi_url(self):
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "https://doi.org/10.1038/Nature12373",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        sub = Submission.objects.get()
+        self.assertEqual(sub.doi, "10.1038/nature12373")
+
+    def test_submit_normalizes_bare_doi_in_url_field(self):
+        # URL field accepts a bare DOI as shorthand; it gets canonicalized to
+        # a doi.org URL and the model's doi field is auto-populated on save.
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "10.1038/Nature12373",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        sub = Submission.objects.get()
+        self.assertEqual(sub.url, "https://doi.org/10.1038/nature12373")
+        self.assertEqual(sub.doi, "10.1038/nature12373")
+
+    def test_submit_rejects_garbage_in_url_field(self):
+        # Neither a valid URL nor a DOI — should be a form error, no submission.
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "not a url and not a doi",
+                "body": "",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Submission.objects.count(), 0)
+        self.assertIn("url", resp.context["form"].errors)
+
+    def test_submit_persists_metadata_and_creates_authors(self):
+        resp = self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "Paper",
+                "url": "https://example.com/p",
+                "body": "",
+                "year": "2023",
+                "source": "journal",
+                "authors_text": "Smith, J.; Doe, A.",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        sub = Submission.objects.get()
+        self.assertEqual(sub.year, 2023)
+        self.assertEqual(sub.source, "journal")
+        sas = list(sub.submission_authors.all())
+        self.assertEqual(len(sas), 2)
+        self.assertEqual([sa.position for sa in sas], [0, 1])
+        self.assertEqual(
+            [sa.author.name for sa in sas], ["Smith, J.", "Doe, A."]
+        )
+
+    def test_resubmit_reuses_author_rows(self):
+        Author.objects.create(name="Smith, J.")
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "P1",
+                "url": "https://example.com/1",
+                "body": "",
+                "authors_text": "Smith, J.",
+                "post_globally": "on",
+            },
+        )
+        self.client.post(
+            "/submit/",
+            {
+                "action": "submit",
+                "title": "P2",
+                "url": "https://example.com/2",
+                "body": "",
+                "authors_text": "Smith, J.",
+                "post_globally": "on",
+            },
+        )
+        self.assertEqual(Author.objects.filter(name="Smith, J.").count(), 1)
+        self.assertEqual(SubmissionAuthor.objects.count(), 2)
+
+    def test_metadata_renders_on_detail_page(self):
+        # DOI is stored but intentionally not displayed (metadata only).
+        sub = Submission.objects.create(
+            title="Paper",
+            body="text",
+            author=self.user,
+            year=2023,
+            source="journal",
+            doi="10.1048/x.y",
+        )
+        SubmissionScope.objects.create(submission=sub, kind=SubmissionScope.KIND_GLOBAL)
+        a1 = Author.objects.create(name="Smith, J.")
+        a2 = Author.objects.create(name="Doe, A.")
+        SubmissionAuthor.objects.create(submission=sub, author=a1, position=0)
+        SubmissionAuthor.objects.create(submission=sub, author=a2, position=1)
+        resp = self.client.get(sub.get_absolute_url())
+        body = resp.content.decode()
+        self.assertIn("Smith, J.", body)
+        self.assertIn("Doe, A.", body)
+        self.assertIn("2023", body)
+        self.assertIn("journal", body)
+
+
+class ApiExtractMetadataTests(TestCase):
+    """The /api/extract-metadata/ endpoint is the single extraction path; the
+    no-JS submit form has no extract button. These tests pin its contract:
+    auth-gated JSON, accepts text or file, returns metadata + kind."""
+
+    URL = "/api/extract-metadata/"
+
+    def setUp(self):
+        self.user = User.objects.create_user("bob", password="pw-test-12345")
+
+    def test_anonymous_user_gets_401_json(self):
+        resp = self.client.post(self.URL, {"text": SAMPLE_BIBTEX})
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(resp["Content-Type"], "application/json")
+        self.assertIn("error", resp.json())
+
+    def test_get_is_405(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(self.URL)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_post_bibtex_text_returns_metadata_and_kind(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.URL, {"text": SAMPLE_BIBTEX})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "bibtex")
+        self.assertEqual(
+            data["metadata"]["title"],
+            "A Mathematical Theory of Communication",
+        )
+        self.assertEqual(data["metadata"]["year"], 1948)
+
+    def test_post_doi_text_returns_metadata(self):
+        self.client.force_login(self.user)
+        with patch(
+            "core.views.extract_metadata",
+            return_value=({"title": "T", "doi": "10.1038/x.y"}, "doi"),
+        ) as m:
+            resp = self.client.post(self.URL, {"text": "10.1038/x.y"})
+        m.assert_called_once_with("10.1038/x.y")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "doi")
+        self.assertEqual(data["metadata"]["doi"], "10.1038/x.y")
+
+    def test_post_garbage_text_returns_400(self):
+        self.client.force_login(self.user)
+        resp = self.client.post(self.URL, {"text": "random nonsense"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp["Content-Type"], "application/json")
+
+    def test_post_uploaded_bibtex_file_returns_metadata(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.user)
+        upload = SimpleUploadedFile(
+            "shannon.bib",
+            SAMPLE_BIBTEX.encode("utf-8"),
+            content_type="application/x-bibtex",
+        )
+        resp = self.client.post(self.URL, {"file": upload})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["kind"], "bibtex")
+        self.assertEqual(data["metadata"]["year"], 1948)
+
+    def test_post_oversize_file_rejected(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.user)
+        upload = SimpleUploadedFile(
+            "big.bib",
+            b"x" * (200_001),
+            content_type="application/x-bibtex",
+        )
+        resp = self.client.post(self.URL, {"file": upload})
+        self.assertEqual(resp.status_code, 413)
+

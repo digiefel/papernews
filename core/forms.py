@@ -1,7 +1,12 @@
+import re
+
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import UserCreationForm
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 
+from .citations import normalize_doi
 from .models import Comment, Submission, SubmissionScope
 from .visibility import writable_communities_for
 
@@ -13,6 +18,16 @@ class SignupForm(UserCreationForm):
 
 
 class SubmissionForm(forms.ModelForm):
+    # Override the model's URLField so we can accept a bare DOI shorthand
+    # (e.g. "10.1038/Nature12373") alongside a normal URL. Validation lives in
+    # clean_url() below; the model's URLField never sees the raw input.
+    url = forms.CharField(
+        required=False,
+        widget=forms.URLInput(
+            attrs={"placeholder": "https://… or 10.xxxx/yyy"}
+        ),
+        label="URL",
+    )
     post_globally = forms.BooleanField(
         required=False,
         initial=True,
@@ -24,20 +39,56 @@ class SubmissionForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         label="Also post to",
     )
+    bibtex_text = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={"rows": 4, "placeholder": "@article{...}"}
+        ),
+        label="BibTeX",
+    )
+    bibtex_file = forms.FileField(
+        required=False,
+        widget=forms.ClearableFileInput(attrs={"accept": ".bib,text/plain,text/x-bibtex"}),
+        label="or drop a .bib file",
+    )
+    authors_text = forms.CharField(
+        required=False,
+        label="Authors",
+        help_text="Separate with ';' or ' and '.",
+    )
 
     class Meta:
         model = Submission
-        fields = ("title", "url", "body")
+        fields = ("title", "url", "body", "year", "source")
         widgets = {
-            "url": forms.URLInput(attrs={"placeholder": "https://..."}),
             "body": forms.Textarea(attrs={"rows": 8}),
+            "year": forms.NumberInput(attrs={"placeholder": "2023"}),
+            "source": forms.TextInput(attrs={"placeholder": "journal, conference, …"}),
         }
-        help_texts = {"body": "Leave the URL blank for a text post."}
+        help_texts = {
+            "body": "Leave the URL blank for a text post.",
+        }
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
         self.fields["communities"].queryset = writable_communities_for(user)
+
+    def clean_url(self):
+        raw = (self.cleaned_data.get("url") or "").strip()
+        if not raw:
+            return ""
+        # Bare DOI shorthand wins: turn "10.xxxx/yyy" (and the doi:/doi.org/
+        # variants) into a canonical doi.org URL.
+        norm_doi = normalize_doi(raw)
+        if norm_doi:
+            return f"https://doi.org/{norm_doi}"
+        # Otherwise, validate as a regular URL.
+        try:
+            URLValidator()(raw)
+        except ValidationError:
+            raise ValidationError("Enter a valid URL or DOI.")
+        return raw
 
     def clean(self):
         cleaned = super().clean()
@@ -46,6 +97,29 @@ class SubmissionForm(forms.ModelForm):
                 "Pick the global feed, one or more communities, or both."
             )
         return cleaned
+
+    def _post_clean(self):
+        # super() copies cleaned_data → self.instance. The DOI field isn't a
+        # form input (URL is canonical), so we derive it here from the now-
+        # assigned self.instance.url. Doing it in the form keeps every "URL
+        # changed → DOI updated" path consistent without the view caring.
+        super()._post_clean()
+        self.instance.doi = normalize_doi(self.instance.url) or ""
+
+    def split_authors(self):
+        """Return ordered, deduped list of non-empty author names from authors_text."""
+        raw = (self.cleaned_data.get("authors_text") or "").strip()
+        if not raw:
+            return []
+        parts = re.split(r"\s*;\s*|\s+and\s+", raw, flags=re.IGNORECASE)
+        seen = set()
+        result = []
+        for p in parts:
+            name = p.strip()
+            if name and name not in seen:
+                seen.add(name)
+                result.append(name)
+        return result
 
 
 GLOBAL_SCOPE_VALUE = "global"
@@ -114,7 +188,7 @@ class CommentForm(forms.ModelForm):
         for c in in_submission:
             choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
         for c in side_channel:
-            choices.append((_community_scope_value(c.id), f"c/{c.slug} (side channel)"))
+            choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
 
         self.fields["scope"].choices = choices
         if not choices:

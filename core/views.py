@@ -6,7 +6,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Prefetch
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -21,13 +21,16 @@ from .forms import (
     _community_scope_value,
     _parse_scope_value,
 )
+from .citations import extract_metadata
 from .models import (
+    Author,
     Comment,
     CommentScope,
     CommentVote,
     Community,
     Save,
     Submission,
+    SubmissionAuthor,
     SubmissionScope,
     SubmissionVote,
 )
@@ -76,6 +79,13 @@ def _scopes_prefetch():
     )
 
 
+def _authors_prefetch(lookup="submission_authors"):
+    return Prefetch(
+        lookup,
+        queryset=SubmissionAuthor.objects.select_related("author"),
+    )
+
+
 def _attach_scope(comment):
     """Set comment.scope_value (string for form input) and comment.scope_community."""
     first_scope = next(iter(comment.scopes.all()), None)
@@ -107,7 +117,7 @@ def front_page(request):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")[:CANDIDATE_POOL]
     )
     candidates.sort(
@@ -123,7 +133,7 @@ def new_page(request):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")
     )
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
@@ -138,7 +148,7 @@ def submission_detail(request, pk):
         visible_submissions_for(request.user)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch()),
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch()),
         pk=pk,
     )
 
@@ -217,7 +227,7 @@ def reply(request, sub_pk, comment_pk):
     submission = get_object_or_404(
         visible_submissions_for(request.user)
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch()),
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch()),
         pk=sub_pk,
     )
     parent = get_object_or_404(
@@ -323,10 +333,41 @@ def submit(request):
                         kind=SubmissionScope.KIND_COMMUNITY,
                         community=community,
                     )
+                for position, name in enumerate(form.split_authors()):
+                    author, _ = Author.objects.get_or_create(name=name)
+                    SubmissionAuthor.objects.create(
+                        submission=submission, author=author, position=position
+                    )
             return redirect(submission.get_absolute_url())
     else:
         form = SubmissionForm(user=request.user)
     return render(request, "core/submit.html", {"form": form})
+
+
+MAX_BIBTEX_UPLOAD_BYTES = 200_000  # BibTeX is small text; 200 KB is generous.
+
+
+@require_POST
+def api_extract_metadata(request):
+    # Authentication: gate the endpoint so anonymous callers can't use the
+    # server as a doi.org fetch proxy. Return JSON (not Django's HTML login
+    # redirect) so the AJAX caller can handle the failure cleanly.
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "authentication required"}, status=401)
+
+    uploaded = request.FILES.get("file")
+    if uploaded is not None:
+        if uploaded.size > MAX_BIBTEX_UPLOAD_BYTES:
+            return JsonResponse({"error": "file too large"}, status=413)
+        source_text = uploaded.read().decode("utf-8", errors="replace")
+    else:
+        source_text = request.POST.get("text", "").strip()
+
+    metadata, kind = extract_metadata(source_text)
+    if not metadata:
+        return JsonResponse({"error": "unrecognized"}, status=400)
+
+    return JsonResponse({"metadata": metadata, "kind": kind})
 
 
 def communities_index(request):
@@ -351,7 +392,7 @@ def community_detail(request, slug):
         .filter(scopes__kind=SubmissionScope.KIND_COMMUNITY, scopes__community=community)
         .annotate(vote_count=Count("votes", distinct=True))
         .select_related("author", "author__profile")
-        .prefetch_related(_scopes_prefetch())
+        .prefetch_related(_scopes_prefetch(), _authors_prefetch())
         .order_by("-created")
         .distinct()
     )
@@ -403,6 +444,7 @@ def saved_page(request):
         .select_related(
             "submission", "submission__author", "submission__author__profile"
         )
+        .prefetch_related(_authors_prefetch("submission__submission_authors"))
         .annotate(vote_count=Count("submission__votes"))
         .order_by("-created")
     )
@@ -427,6 +469,7 @@ def user_page(request, username):
         .filter(author=profile_user)
         .annotate(vote_count=Count("votes"))
         .select_related("author", "author__profile")
+        .prefetch_related(_authors_prefetch())
     )
     for submission in submissions:
         submission.item_type = "submission"

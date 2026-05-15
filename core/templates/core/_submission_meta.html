@@ -1,0 +1,12 @@
+{% load core_extras %}
+{% with author_names=submission|author_names year=submission.year source=submission.source %}
+{% if author_names or year or source %}
+  <div class="meta muted">
+    {% spaceless %}
+    {% if author_names %}<span class="authors">{{ author_names|join_authors }}</span>{% endif %}
+    {% if year %}{% if author_names %} &middot; {% endif %}<span class="year">{{ year }}</span>{% endif %}
+    {% if source %}{% if author_names or year %} &middot; {% endif %}<span class="source">{{ source }}</span>{% endif %}
+    {% endspaceless %}
+  </div>
+{% endif %}
+{% endwith %}

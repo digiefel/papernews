@@ -5,25 +5,11 @@
 {% block content %}
   <h1>Submit</h1>
   <p class="muted">Post a link, or leave the URL blank and write a text post.</p>
+
   <form class="stacked" method="post">
     {% csrf_token %}
     {{ form.non_field_errors }}
-    <p>
-      <label for="{{ form.title.id_for_label }}">Title</label>
-      {{ form.title }}
-      {{ form.title.errors }}
-    </p>
-    <p>
-      <label for="{{ form.url.id_for_label }}">URL</label>
-      {{ form.url }}
-      {{ form.url.errors }}
-    </p>
-    <p>
-      <label for="{{ form.body.id_for_label }}">Text</label>
-      {{ form.body }}
-      <span class="muted">{{ form.body.help_text }}</span>
-      {{ form.body.errors }}
-    </p>
+
     <fieldset class="scope-picker">
       <legend>Where to post</legend>
       <p>
@@ -35,6 +21,212 @@
       {% endif %}
       {{ form.communities.errors }}
     </fieldset>
+
+    <p>
+      <label for="{{ form.title.id_for_label }}">Title</label>
+      {{ form.title }}
+      {{ form.title.errors }}
+    </p>
+    <p>
+      <label for="{{ form.url.id_for_label }}">URL or DOI</label>
+      {{ form.url }}
+      <span class="muted">{{ form.url.help_text }}</span>
+      {{ form.url.errors }}
+    </p>
+    <p>
+      <label for="{{ form.body.id_for_label }}">Text</label>
+      {{ form.body }}
+      <span class="muted">{{ form.body.help_text }}</span>
+      {{ form.body.errors }}
+    </p>
+
+    <details class="metadata"{% if form.year.value or form.source.value or form.authors_text.value %} open{% endif %}>
+      <summary class="muted">Optional metadata</summary>
+
+      <div class="metadata-body">
+        <p class="extract-status muted" hidden></p>
+
+        <p>
+          <label for="{{ form.authors_text.id_for_label }}">Authors</label>
+          {{ form.authors_text }}
+          <span class="muted">{{ form.authors_text.help_text }}</span>
+          {{ form.authors_text.errors }}
+        </p>
+
+        <div class="meta-row">
+          <p class="field-year">
+            <label for="{{ form.year.id_for_label }}">Year</label>
+            {{ form.year }}
+            {{ form.year.errors }}
+          </p>
+          <p class="field-source">
+            <label for="{{ form.source.id_for_label }}">Source</label>
+            {{ form.source }}
+            {{ form.source.errors }}
+          </p>
+        </div>
+
+        <div class="bibtex-extract js-only">
+          <p class="muted">Paste BibTeX or drop a .bib file to auto-fill above.</p>
+          <div class="bibtex-body">
+            {{ form.bibtex_text }}
+            <p class="file-row">
+              <label class="file-drop">
+                {{ form.bibtex_file }}
+                <span class="muted">{{ form.bibtex_file.label }}</span>
+              </label>
+            </p>
+          </div>
+        </div>
+      </div>
+    </details>
+
     <button type="submit">submit</button>
   </form>
+
+  <script>
+  (function () {
+    var detailsEl = document.querySelector("details.metadata");
+    var urlInput = document.getElementById("id_url");
+    var bibtexInput = document.getElementById("id_bibtex_text");
+    var fileInput = document.getElementById("id_bibtex_file");
+    var statusEl = document.querySelector(".extract-status");
+    var csrfEl = document.querySelector("[name=csrfmiddlewaretoken]");
+    if (!csrfEl) return;
+    var csrf = csrfEl.value;
+
+    var fields = {
+      title: document.getElementById("id_title"),
+      year: document.getElementById("id_year"),
+      source: document.getElementById("id_source"),
+      authors: document.getElementById("id_authors_text"),
+      url: urlInput,
+    };
+
+    function looksLikeDoi(v) {
+      var t = (v || "").trim();
+      return /^10\.\d{4,9}\/\S+$/.test(t)
+        || /^(https?:\/\/)?(dx\.)?doi\.org\/10\.\d{4,9}\//i.test(t);
+    }
+
+    function looksLikeBibtex(v) {
+      return (v || "").trim().startsWith("@");
+    }
+
+    function setStatus(msg) {
+      if (!statusEl) return;
+      if (msg) {
+        statusEl.textContent = msg;
+        statusEl.hidden = false;
+      } else {
+        statusEl.textContent = "";
+        statusEl.hidden = true;
+      }
+    }
+
+    function setIfEmpty(field, value) {
+      if (field && value && !field.value) field.value = value;
+    }
+
+    function applyMetadata(m) {
+      setIfEmpty(fields.title, m.title);
+      setIfEmpty(fields.year, m.year);
+      setIfEmpty(fields.source, m.source);
+      if (m.authors && m.authors.length) {
+        setIfEmpty(fields.authors, m.authors.join("; "));
+      }
+      // URL is special: always canonicalize when we know the DOI, even if the
+      // field already has the user's bare-DOI input.
+      if (fields.url && m.doi) {
+        fields.url.value = "https://doi.org/" + m.doi;
+      } else {
+        setIfEmpty(fields.url, m.url);
+      }
+    }
+
+    var inflight = null;
+
+    function extract(opts) {
+      if (inflight) inflight.abort();
+      var controller = new AbortController();
+      inflight = controller;
+
+      var fd = new FormData();
+      fd.append("csrfmiddlewaretoken", csrf);
+      if (opts.text) fd.append("text", opts.text);
+      if (opts.file) fd.append("file", opts.file);
+
+      setStatus("Extracting…");
+      fetch("{% url 'api_extract_metadata' %}", {
+        method: "POST",
+        body: fd,
+        signal: controller.signal,
+        credentials: "same-origin",
+      }).then(function (res) {
+        if (res.status === 401) {
+          setStatus("Sign in to auto-fill metadata.");
+          return null;
+        }
+        if (!res.ok) {
+          setStatus("Couldn't extract — fill in manually.");
+          return null;
+        }
+        return res.json();
+      }).then(function (data) {
+        if (!data || !data.metadata) return;
+        applyMetadata(data.metadata);
+        if (detailsEl) detailsEl.open = true;
+        var label = data.kind === "doi" ? "DOI" : "BibTeX";
+        setStatus("Filled from " + label + " — review and edit.");
+      }).catch(function (err) {
+        if (err.name === "AbortError") return;
+        setStatus("Couldn't reach server.");
+      });
+    }
+
+    function bindAutoExtract(input, recognise) {
+      if (!input) return;
+      function maybe() {
+        if (recognise(input.value)) extract({ text: input.value });
+      }
+      input.addEventListener("change", maybe);
+      // paste fires before the value is updated; defer one tick.
+      input.addEventListener("paste", function () { setTimeout(maybe, 0); });
+    }
+
+    bindAutoExtract(urlInput, looksLikeDoi);
+    bindAutoExtract(bibtexInput, looksLikeBibtex);
+
+    if (bibtexInput) {
+      bibtexInput.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        bibtexInput.classList.add("drag-over");
+      });
+      bibtexInput.addEventListener("dragleave", function () {
+        bibtexInput.classList.remove("drag-over");
+      });
+      bibtexInput.addEventListener("drop", function (e) {
+        bibtexInput.classList.remove("drag-over");
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length > 0) {
+          e.preventDefault();
+          var file = files[0];
+          var reader = new FileReader();
+          reader.onload = function (ev) {
+            bibtexInput.value = ev.target.result;
+            extract({ text: ev.target.result });
+          };
+          reader.readAsText(file);
+        }
+      });
+    }
+
+    if (fileInput) {
+      fileInput.addEventListener("change", function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (file) extract({ file: file });
+      });
+    }
+  })();
+  </script>
 {% endblock %}

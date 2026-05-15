@@ -204,7 +204,150 @@ form.stacked textarea {
 }
 
 .scope-picker {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
   padding: 0 0.5rem 0.5rem;
+  border: 1px solid #e0dcd0;
+  margin: 0.6rem 0;
+}
+
+.scope-picker legend {
+  padding: 0 0.3rem;
+  color: #828282;
+}
+
+details.metadata {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  padding: 0.5rem;
+  border: 1px solid #e0dcd0;
+  margin: 0.6rem 0;
+}
+
+details.metadata > summary {
+  color: #828282;
+  cursor: pointer;
+  user-select: none;
+}
+
+details.metadata > summary:hover {
+  color: #555;
+}
+
+.metadata-body {
+  margin-top: 0.5rem;
+}
+
+/* Year + Source side by side */
+.meta-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+}
+
+.meta-row .field-year {
+  width: 7rem;
+  flex-shrink: 0;
+}
+
+.meta-row .field-year input {
+  max-width: 100%;
+}
+
+.meta-row .field-source {
+  flex: 1;
+  min-width: 0;
+}
+
+.meta-row .field-source input {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* JS-only UI: hidden by default to avoid flicker; shown when <html> has .js */
+.js-only {
+  display: none;
+}
+
+.js .js-only {
+  display: block;
+}
+
+/* BibTeX inline section */
+.bibtex-extract {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e0dcd0;
+}
+
+.bibtex-extract > p.muted {
+  margin-bottom: 0.4rem;
+}
+
+.bibtex-body textarea {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  font: inherit;
+  margin-bottom: 0.3rem;
+  transition: outline-color 0.1s, background 0.1s;
+}
+
+.bibtex-body textarea.drag-over {
+  outline: 2px dashed #ff6600;
+  outline-offset: 1px;
+  background: #fff8f0;
+}
+
+.extract-status {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  max-width: 480px;
+}
+
+.file-drop {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px dashed #b8b3a4;
+  border-radius: 3px;
+  font-size: 0.85em;
+  background: #fbfaf5;
+}
+
+.file-drop span {
+  white-space: nowrap;
+}
+
+form.stacked .file-drop input[type="file"],
+.file-drop input[type="file"] {
+  font: inherit;
+  font-size: 0.9em;
+  max-width: 180px;
+  margin: 0;
+  display: inline-block;
+  width: auto;
+}
+
+.meta {
+  font-size: 0.85em;
+  margin-top: 0.15rem;
 }
 
 .scope-picker label {
@@ -220,6 +363,10 @@ form.stacked textarea {
 
 form.stacked p {
   margin: 0.4rem 0;
+}
+
+form.stacked p.file-row {
+  margin: 0;
 }
 
 button[type="submit"] {
