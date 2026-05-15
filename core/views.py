@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from django.contrib.auth import login
+from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
@@ -12,8 +12,10 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .forms import CommentForm, SignupForm, SubmissionForm
-from .models import Comment, CommentVote, Submission, SubmissionVote
+from .models import Comment, CommentVote, Save, Submission, SubmissionVote
 from .ranking import hot_score
+
+User = get_user_model()
 
 PAGE_SIZE = 30
 CANDIDATE_POOL = 200
@@ -30,6 +32,21 @@ def _safe_next(request, fallback="home"):
     return reverse(fallback)
 
 
+def _mark_saved(submissions, user):
+    """Set .is_saved on each submission for `user`, in one query (no N+1)."""
+    if not user.is_authenticated:
+        for s in submissions:
+            s.is_saved = False
+        return
+    saved_ids = set(
+        Save.objects.filter(user=user, submission__in=submissions).values_list(
+            "submission_id", flat=True
+        )
+    )
+    for s in submissions:
+        s.is_saved = s.id in saved_ids
+
+
 def front_page(request):
     now = timezone.now()
     candidates = list(
@@ -42,6 +59,7 @@ def front_page(request):
         key=lambda s: hot_score(s.vote_count, s.created, now), reverse=True
     )
     page = Paginator(candidates, PAGE_SIZE).get_page(request.GET.get("page"))
+    _mark_saved(page.object_list, request.user)
     return render(request, "core/listing.html", {"page_obj": page})
 
 
@@ -53,6 +71,7 @@ def new_page(request):
         .order_by("-created")
     )
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
+    _mark_saved(page.object_list, request.user)
     return render(request, "core/listing.html", {"page_obj": page, "page_title": "New"})
 
 
@@ -138,6 +157,75 @@ def vote_comment(request, pk):
     comment = get_object_or_404(Comment, pk=pk, is_removed=False)
     CommentVote.objects.get_or_create(comment=comment, user=request.user)
     return redirect(_safe_next(request))
+
+
+@require_POST
+@login_required
+def toggle_save(request, pk):
+    submission = get_object_or_404(Submission.objects.visible(), pk=pk)
+    save, created = Save.objects.get_or_create(
+        submission=submission, user=request.user
+    )
+    if not created:
+        save.delete()
+    return redirect(_safe_next(request))
+
+
+@login_required
+def saved_page(request):
+    saves = (
+        Save.objects.filter(user=request.user, submission__is_removed=False)
+        .select_related(
+            "submission", "submission__author", "submission__author__profile"
+        )
+        .annotate(vote_count=Count("submission__votes"))
+        .order_by("-created")
+    )
+    page = Paginator(saves, PAGE_SIZE).get_page(request.GET.get("page"))
+    submissions = []
+    for save in page.object_list:
+        submission = save.submission
+        submission.vote_count = save.vote_count
+        submission.is_saved = True
+        submissions.append(submission)
+    page.object_list = submissions
+    return render(
+        request, "core/listing.html", {"page_obj": page, "page_title": "Saved"}
+    )
+
+
+def user_page(request, username):
+    profile_user = get_object_or_404(User, username=username)
+
+    submissions = list(
+        Submission.objects.visible()
+        .filter(author=profile_user)
+        .annotate(vote_count=Count("votes"))
+        .select_related("author", "author__profile")
+    )
+    for submission in submissions:
+        submission.item_type = "submission"
+
+    comments = list(
+        Comment.objects.filter(
+            author=profile_user, is_removed=False, submission__is_removed=False
+        )
+        .annotate(vote_count=Count("votes"))
+        .select_related("author", "author__profile", "submission")
+    )
+    for comment in comments:
+        comment.item_type = "comment"
+
+    feed = sorted(submissions + comments, key=lambda x: x.created, reverse=True)
+    page = Paginator(feed, PAGE_SIZE).get_page(request.GET.get("page"))
+    _mark_saved(
+        [i for i in page.object_list if i.item_type == "submission"], request.user
+    )
+    return render(
+        request,
+        "core/user_page.html",
+        {"profile_user": profile_user, "page_obj": page},
+    )
 
 
 def signup(request):

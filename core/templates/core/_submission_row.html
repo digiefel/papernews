@@ -19,6 +19,14 @@
       &middot; by {{ submission.author.username }}{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
       &middot; {{ submission.created|timesince }} ago
       &middot; <a href="{{ submission.get_absolute_url }}">discuss</a>
+      {% if user.is_authenticated %}
+        &middot;
+        <form class="inline" method="post" action="{% url 'toggle_save' submission.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <button type="submit" class="linkbtn">{% if submission.is_saved %}unsave{% else %}save{% endif %}</button>
+        </form>
+      {% endif %}
     </div>
   </div>
 </article>

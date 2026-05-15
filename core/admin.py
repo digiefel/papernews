@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Comment, CommentVote, Profile, Submission, SubmissionVote
+from .models import Comment, CommentVote, Profile, Save, Submission, SubmissionVote
 
 
 @admin.register(Profile)
@@ -37,3 +37,9 @@ class SubmissionVoteAdmin(admin.ModelAdmin):
 class CommentVoteAdmin(admin.ModelAdmin):
     list_display = ("comment", "user", "created")
     raw_id_fields = ("comment", "user")
+
+
+@admin.register(Save)
+class SaveAdmin(admin.ModelAdmin):
+    list_display = ("submission", "user", "created")
+    raw_id_fields = ("submission", "user")
