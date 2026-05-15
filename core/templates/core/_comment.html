@@ -1,25 +1,28 @@
 {% load markup %}
 <div class="comment" id="comment-{{ comment.pk }}" style="margin-left: {{ comment.indent }}rem;">
-  <div class="subtext muted">
-    {{ comment.author.username }}{% if comment.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
-    &middot; {{ comment.created|timesince }} ago
-    &middot; {{ comment.vote_count }} point{{ comment.vote_count|pluralize }}
-    <form class="inline vote" method="post" action="{% url 'vote_comment' comment.pk %}">
+  <div class="comment-row">
+    <form class="vote" method="post" action="{% url 'vote_comment' comment.pk %}">
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
-      <button type="submit" class="upvote" title="upvote">&#9650;</button>
+      <button type="submit" class="upvote" title="upvote" aria-label="upvote">&#9650;</button>
     </form>
+    <div class="comment-main">
+      <div class="subtext muted">
+        <span class="username">{{ comment.author.username }}</span>{% if comment.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
+        {{ comment.created|timesince }} ago
+        {% if comment.scope_community %}
+          | in <a href="{{ comment.scope_community.get_absolute_url }}">c/{{ comment.scope_community.slug }}</a>
+        {% endif %}
+        {% if show_on_link %}
+          | on: <a href="{{ submission.get_absolute_url }}">{{ submission.title }}</a>
+        {% endif %}
+      </div>
+      <div class="comment-body">{{ comment.body|render_text }}</div>
+      {% if user.is_authenticated and not hide_reply %}
+        <div class="reply-link"><a href="{% url 'reply' submission.pk comment.pk %}">reply</a></div>
+      {% endif %}
+    </div>
   </div>
-  <div class="comment-body">{{ comment.body|render_text }}</div>
-  {% if user.is_authenticated %}
-    <form class="reply" method="post" action="{{ submission.get_absolute_url }}">
-      {% csrf_token %}
-      <input type="hidden" name="parent_id" value="{{ comment.pk }}">
-      <input type="hidden" name="scope" value="{{ comment.scope_value }}">
-      <textarea name="body" rows="2" placeholder="reply..."></textarea>
-      <button type="submit">reply</button>
-    </form>
-  {% endif %}
   {% for child in comment.children_list %}
     {% include "core/_comment.html" with comment=child %}
   {% endfor %}

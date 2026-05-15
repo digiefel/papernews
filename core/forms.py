@@ -16,7 +16,7 @@ class SubmissionForm(forms.ModelForm):
     post_globally = forms.BooleanField(
         required=False,
         initial=True,
-        label="Post to the global feed",
+        label="global",
     )
     communities = forms.ModelMultipleChoiceField(
         queryset=None,

@@ -20,11 +20,10 @@
         {% endif %}
       </div>
       <div class="subtext muted">
-        {{ submission.vote_count }} point{{ submission.vote_count|pluralize }}
-        &middot; by {{ submission.author.username }}{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
-        &middot; {{ submission.created|timesince }} ago
+        by <span class="username">{{ submission.author.username }}</span>{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
+        {{ submission.created|timesince }} ago
         {% for scope in submission.scopes.all %}{% if scope.community_id %}
-          &middot; in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
+          | in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
         {% endif %}{% endfor %}
       </div>
     </div>

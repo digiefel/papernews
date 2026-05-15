@@ -76,6 +76,17 @@ def _scopes_prefetch():
     )
 
 
+def _attach_scope(comment):
+    """Set comment.scope_value (string for form input) and comment.scope_community."""
+    first_scope = next(iter(comment.scopes.all()), None)
+    if first_scope is None or first_scope.kind == CommentScope.KIND_GLOBAL:
+        comment.scope_value = GLOBAL_SCOPE_VALUE
+        comment.scope_community = None
+    else:
+        comment.scope_value = _community_scope_value(first_scope.community_id)
+        comment.scope_community = first_scope.community
+
+
 def _default_scope_from_provenance(request, submission):
     """If ?in=<slug> matches a community the user can write in, use it; else None."""
     slug = request.GET.get("in", "").strip()
@@ -149,11 +160,6 @@ def submission_detail(request, pk):
                 comment = form.save(commit=False)
                 comment.author = request.user
                 comment.submission = submission
-                parent_id = request.POST.get("parent_id")
-                if parent_id:
-                    comment.parent = get_object_or_404(
-                        Comment, pk=parent_id, submission=submission
-                    )
                 comment.save()
                 kind, community_id = _parse_scope_value(form.cleaned_data["scope"])
                 if kind == "global":
@@ -190,15 +196,7 @@ def submission_detail(request, pk):
         by_parent[c.parent_id].append(c)
     for c in comments:
         c.children_list = by_parent[c.id]
-        # Nested reply forms inherit the parent comment's scope. Each comment
-        # has exactly one scope row in v1, so just grab the first.
-        first_scope = next(iter(c.scopes.all()), None)
-        if first_scope is None:
-            c.scope_value = GLOBAL_SCOPE_VALUE
-        elif first_scope.kind == CommentScope.KIND_GLOBAL:
-            c.scope_value = GLOBAL_SCOPE_VALUE
-        else:
-            c.scope_value = _community_scope_value(first_scope.community_id)
+        _attach_scope(c)
     roots = by_parent[None]
 
     stack = [(c, 0) for c in roots]
@@ -211,6 +209,98 @@ def submission_detail(request, pk):
         request,
         "core/submission_detail.html",
         {"submission": submission, "roots": roots, "form": form},
+    )
+
+
+@login_required
+def reply(request, sub_pk, comment_pk):
+    submission = get_object_or_404(
+        visible_submissions_for(request.user)
+        .select_related("author", "author__profile")
+        .prefetch_related(_scopes_prefetch()),
+        pk=sub_pk,
+    )
+    parent = get_object_or_404(
+        visible_comments_for(request.user, submission)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(
+            Prefetch(
+                "scopes",
+                queryset=CommentScope.objects.select_related("community"),
+            )
+        ),
+        pk=comment_pk,
+    )
+    _attach_scope(parent)
+
+    # Siblings of the parent: comments visible to this user at the same depth
+    # under the same grandparent (or top-level if the parent itself is root).
+    sibling_qs = (
+        visible_comments_for(request.user, submission)
+        .filter(parent_id=parent.parent_id)
+        .exclude(pk=parent.pk)
+        .annotate(vote_count=Count("votes", distinct=True))
+        .select_related("author", "author__profile")
+        .prefetch_related(
+            Prefetch(
+                "scopes",
+                queryset=CommentScope.objects.select_related("community"),
+            )
+        )
+    )
+    siblings = list(sibling_qs)
+    for s in siblings:
+        s.indent = 0
+        s.children_list = []
+        _attach_scope(s)
+    parent.indent = 0
+    parent.children_list = []
+
+    if request.method == "POST":
+        # Reuse the same scope rules as inline replies: inherited from parent,
+        # passed as a hidden field. Validate via the same CommentForm.
+        form = CommentForm(
+            request.POST,
+            submission=submission,
+            user=request.user,
+            default_scope=parent.scope_value,
+        )
+        if form.is_valid():
+            with transaction.atomic():
+                comment = form.save(commit=False)
+                comment.author = request.user
+                comment.submission = submission
+                comment.parent = parent
+                comment.save()
+                kind, community_id = _parse_scope_value(form.cleaned_data["scope"])
+                if kind == "global":
+                    CommentScope.objects.create(
+                        comment=comment, kind=CommentScope.KIND_GLOBAL
+                    )
+                else:
+                    CommentScope.objects.create(
+                        comment=comment,
+                        kind=CommentScope.KIND_COMMUNITY,
+                        community_id=community_id,
+                    )
+            return redirect(comment.get_absolute_url())
+    else:
+        form = CommentForm(
+            submission=submission,
+            user=request.user,
+            default_scope=parent.scope_value,
+        )
+
+    return render(
+        request,
+        "core/reply.html",
+        {
+            "submission": submission,
+            "parent": parent,
+            "siblings": siblings,
+            "form": form,
+        },
     )
 
 

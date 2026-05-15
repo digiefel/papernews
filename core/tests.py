@@ -169,8 +169,8 @@ class ViewTests(TestCase):
         )
         top = Comment.objects.get()
         self.client.post(
-            s.get_absolute_url(),
-            {"body": "a reply", "parent_id": top.pk, "scope": "global"},
+            f"/item/{s.pk}/reply/{top.pk}/",
+            {"body": "a reply", "scope": "global"},
         )
         reply = Comment.objects.get(body="a reply")
         self.assertEqual(reply.parent_id, top.pk)
@@ -446,8 +446,7 @@ class VisibilityTests(TestCase):
         scopes = [(sc.kind, sc.community_id) for sc in c.scopes.all()]
         self.assertEqual(scopes, [("community", self.private_community.id)])
 
-    def test_nested_reply_inherits_parent_scope(self):
-        # Parent comment is scoped only to c/my-lab on a global submission.
+    def test_reply_page_inherits_parent_scope(self):
         s = make_submission(title="open paper", body="x", author=self.author)
         parent = make_comment(
             s,
@@ -457,26 +456,77 @@ class VisibilityTests(TestCase):
             communities=[self.private_community],
         )
         self.client.force_login(self.member)
-        # The rendered reply form must carry the parent's scope so the user
-        # can't accidentally globalize a side-channel thread.
-        resp = self.client.get(s.get_absolute_url())
+        # Reply page renders with the parent's scope as a hidden field.
+        resp = self.client.get(f"/item/{s.pk}/reply/{parent.pk}/")
+        self.assertEqual(resp.status_code, 200)
         self.assertContains(
             resp,
             f'name="scope" value="c{self.private_community.id}"',
         )
-        # POSTing a reply with that scope succeeds and inherits.
+        # POSTing a reply through the reply view inherits the parent's scope.
         self.client.post(
-            s.get_absolute_url(),
-            {
-                "body": "agreed",
-                "parent_id": parent.pk,
-                "scope": f"c{self.private_community.id}",
-            },
+            f"/item/{s.pk}/reply/{parent.pk}/",
+            {"body": "agreed", "scope": f"c{self.private_community.id}"},
         )
         reply = Comment.objects.get(body="agreed")
         self.assertEqual(reply.parent_id, parent.pk)
         scopes = [(sc.kind, sc.community_id) for sc in reply.scopes.all()]
         self.assertEqual(scopes, [("community", self.private_community.id)])
+
+    def test_reply_link_in_comment_subtext(self):
+        s = make_submission(title="paper", body="x", author=self.author)
+        parent = make_comment(s, author=self.author, body="root")
+        self.client.force_login(self.author)
+        resp = self.client.get(s.get_absolute_url())
+        self.assertContains(resp, f'/item/{s.pk}/reply/{parent.pk}/')
+
+    def test_reply_page_shows_parent_and_siblings(self):
+        s = make_submission(title="paper", body="x", author=self.author)
+        root = make_comment(s, author=self.author, body="root")
+        target = make_comment(s, author=self.author, parent=root, body="target")
+        # Sibling of target (same parent_id)
+        sibling = make_comment(s, author=self.author, parent=root, body="sib")
+        self.client.force_login(self.author)
+        resp = self.client.get(f"/item/{s.pk}/reply/{target.pk}/")
+        self.assertContains(resp, "target")
+        self.assertContains(resp, "sib")
+        self.assertNotContains(resp, "root")  # ancestors are not shown
+
+    def test_reply_page_404_for_hidden_parent(self):
+        # Outsider can't open a reply page for a comment in a private community.
+        s = make_submission(title="paper", body="x", author=self.author)
+        secret = make_comment(
+            s,
+            author=self.author,
+            body="lab only",
+            global_=False,
+            communities=[self.private_community],
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.get(f"/item/{s.pk}/reply/{secret.pk}/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_comment_scope_badge_renders_for_community_scoped(self):
+        s = make_submission(
+            title="paper",
+            body="x",
+            author=self.author,
+            communities=[self.public_community],
+        )
+        make_comment(
+            s,
+            author=self.author,
+            body="lab whisper",
+            global_=False,
+            communities=[self.public_community],
+        )
+        make_comment(s, author=self.author, body="public chatter")
+        resp = self.client.get(s.get_absolute_url())
+        # Community-scoped comment shows badge; global one does not.
+        body = resp.content.decode()
+        # The badge fragment used by the template
+        self.assertIn("in <a", body)
+        self.assertIn("c/ml-systems", body)
 
     def test_community_feed_discuss_link_carries_in_param(self):
         make_submission(

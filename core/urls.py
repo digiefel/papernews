@@ -7,6 +7,7 @@ urlpatterns = [
     path("new/", views.new_page, name="new"),
     path("submit/", views.submit, name="submit"),
     path("item/<int:pk>/", views.submission_detail, name="submission_detail"),
+    path("item/<int:sub_pk>/reply/<int:comment_pk>/", views.reply, name="reply"),
     path("vote/submission/<int:pk>/", views.vote_submission, name="vote_submission"),
     path("vote/comment/<int:pk>/", views.vote_comment, name="vote_comment"),
     path("save/submission/<int:pk>/", views.toggle_save, name="toggle_save"),
