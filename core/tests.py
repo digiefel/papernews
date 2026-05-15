@@ -6,7 +6,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
-from .models import Comment, CommentVote, Profile, Submission, SubmissionVote
+from .models import Comment, CommentVote, Profile, Save, Submission, SubmissionVote
 from .ranking import hot_score
 
 
@@ -168,3 +168,97 @@ class ViewTests(TestCase):
         )
         resp = self.client.get("/new/")
         self.assertEqual(len(resp.context["page_obj"]), 0)
+
+
+class SaveTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("bob", password="pw-test-12345")
+        self.sub = Submission.objects.create(
+            title="a", body="x", author=self.user
+        )
+
+    def test_save_unique_constraint(self):
+        Save.objects.create(submission=self.sub, user=self.user)
+        with self.assertRaises(IntegrityError):
+            Save.objects.create(submission=self.sub, user=self.user)
+
+    def test_toggle_save_creates_then_deletes(self):
+        self.client.force_login(self.user)
+        url = f"/save/submission/{self.sub.pk}/"
+        self.client.post(url)
+        self.assertEqual(Save.objects.count(), 1)
+        self.client.post(url)
+        self.assertEqual(Save.objects.count(), 0)
+
+    def test_toggle_save_requires_login(self):
+        resp = self.client.post(f"/save/submission/{self.sub.pk}/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+
+    def test_toggle_save_get_not_allowed(self):
+        self.client.force_login(self.user)
+        resp = self.client.get(f"/save/submission/{self.sub.pk}/")
+        self.assertEqual(resp.status_code, 405)
+
+    def test_saved_page_requires_login(self):
+        resp = self.client.get("/saved/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+
+    def test_saved_page_lists_saved_recent_first_excludes_removed(self):
+        kept = Submission.objects.create(title="kept", body="x", author=self.user)
+        gone = Submission.objects.create(
+            title="gone", body="x", author=self.user, is_removed=True
+        )
+        now = timezone.now()
+        # auto_now_add gives near-identical timestamps; pin them to assert order.
+        for sub, ago in [(self.sub, 30), (kept, 10), (gone, 0)]:
+            Save.objects.filter(
+                pk=Save.objects.create(submission=sub, user=self.user).pk
+            ).update(created=now - timedelta(minutes=ago))
+
+        self.client.force_login(self.user)
+        resp = self.client.get("/saved/")
+        items = list(resp.context["page_obj"])
+        self.assertEqual([i.pk for i in items], [kept.pk, self.sub.pk])
+
+
+class UserPageTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password="pw-test-12345")
+        self.other = User.objects.create_user("bob", password="pw-test-12345")
+
+    def test_user_page_interleaves_and_orders(self):
+        s1 = Submission.objects.create(title="first", body="x", author=self.user)
+        host = Submission.objects.create(title="host", body="x", author=self.other)
+        c1 = Comment.objects.create(submission=host, author=self.user, body="c1")
+        s2 = Submission.objects.create(title="second", body="y", author=self.user)
+
+        resp = self.client.get(f"/u/{self.user.username}/")
+        items = list(resp.context["page_obj"])
+        self.assertEqual([i.pk for i in items], [s2.pk, c1.pk, s1.pk])
+        self.assertEqual(
+            [i.item_type for i in items], ["submission", "comment", "submission"]
+        )
+
+    def test_user_page_excludes_removed(self):
+        Submission.objects.create(
+            title="hidden", body="x", author=self.user, is_removed=True
+        )
+        host_ok = Submission.objects.create(title="ok host", body="x", author=self.other)
+        host_gone = Submission.objects.create(
+            title="gone host", body="x", author=self.other, is_removed=True
+        )
+        Comment.objects.create(
+            submission=host_ok, author=self.user, body="removed", is_removed=True
+        )
+        Comment.objects.create(
+            submission=host_gone, author=self.user, body="orphan"
+        )
+
+        resp = self.client.get(f"/u/{self.user.username}/")
+        self.assertEqual(len(resp.context["page_obj"]), 0)
+
+    def test_user_page_404_unknown_user(self):
+        resp = self.client.get("/u/nobody/")
+        self.assertEqual(resp.status_code, 404)

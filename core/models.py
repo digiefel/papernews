@@ -135,3 +135,18 @@ class CommentVote(models.Model):
                 fields=["comment", "user"], name="uniq_comment_vote"
             )
         ]
+
+
+class Save(models.Model):
+    submission = models.ForeignKey(
+        Submission, on_delete=models.CASCADE, related_name="saves"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="saves"
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["submission", "user"], name="uniq_save")
+        ]

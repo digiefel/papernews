@@ -1,0 +1,28 @@
+{% extends "core/base.html" %}
+
+{% block title %}{{ profile_user.username }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <header class="user-header">
+    <h1>{{ profile_user.username }}{% if profile_user.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}</h1>
+    <p class="muted">joined {{ profile_user.profile.created|date:"j M Y" }}</p>
+  </header>
+
+  {% for item in page_obj %}
+    {% if item.item_type == "submission" %}
+      {% include "core/_submission_row.html" with submission=item %}
+    {% else %}
+      {% include "core/_comment_row.html" with comment=item %}
+    {% endif %}
+  {% empty %}
+    <p class="muted">No activity yet.</p>
+  {% endfor %}
+
+  {% if page_obj.has_other_pages %}
+    <nav class="pager muted">
+      {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">&larr; prev</a>{% endif %}
+      <span>page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">next &rarr;</a>{% endif %}
+    </nav>
+  {% endif %}
+{% endblock %}
