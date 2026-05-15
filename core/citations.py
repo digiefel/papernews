@@ -13,6 +13,9 @@ _BIB_FIELD_RE = re.compile(
     r"(\w+)\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\}|\"[^\"]*\"|[^,\n]+)\s*,?",
     re.DOTALL,
 )
+# BibTeX entries are small text — anything bigger than this is a malicious
+# redirect target, not a citation.
+_MAX_BIBTEX_RESPONSE_BYTES = 500_000
 
 
 def normalize_doi(raw):
@@ -94,8 +97,11 @@ def fetch_bibtex_for_doi(doi, timeout=5):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status != 200:
                 return None
+            body = resp.read(_MAX_BIBTEX_RESPONSE_BYTES + 1)
+            if len(body) > _MAX_BIBTEX_RESPONSE_BYTES:
+                return None
             charset = resp.headers.get_content_charset() or "utf-8"
-            return resp.read().decode(charset, errors="replace")
+            return body.decode(charset, errors="replace")
     except (urllib.error.URLError, TimeoutError, OSError):
         return None
 

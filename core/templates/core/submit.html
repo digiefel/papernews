@@ -124,18 +124,23 @@
       }
     }
 
+    function setIfEmpty(field, value) {
+      if (field && value && !field.value) field.value = value;
+    }
+
     function applyMetadata(m) {
-      if (m.title && fields.title && !fields.title.value) fields.title.value = m.title;
-      if (m.year && fields.year && !fields.year.value) fields.year.value = m.year;
-      if (m.source && fields.source && !fields.source.value) fields.source.value = m.source;
-      if (m.authors && m.authors.length && fields.authors && !fields.authors.value) {
-        fields.authors.value = m.authors.join("; ");
+      setIfEmpty(fields.title, m.title);
+      setIfEmpty(fields.year, m.year);
+      setIfEmpty(fields.source, m.source);
+      if (m.authors && m.authors.length) {
+        setIfEmpty(fields.authors, m.authors.join("; "));
       }
-      // Always canonicalize URL when we know the DOI.
+      // URL is special: always canonicalize when we know the DOI, even if the
+      // field already has the user's bare-DOI input.
       if (fields.url && m.doi) {
         fields.url.value = "https://doi.org/" + m.doi;
-      } else if (fields.url && !fields.url.value && m.url) {
-        fields.url.value = m.url;
+      } else {
+        setIfEmpty(fields.url, m.url);
       }
     }
 
@@ -179,26 +184,20 @@
       });
     }
 
-    if (urlInput) {
-      urlInput.addEventListener("change", function () {
-        if (looksLikeDoi(urlInput.value)) extract({ text: urlInput.value });
-      });
-      urlInput.addEventListener("paste", function () {
-        setTimeout(function () {
-          if (looksLikeDoi(urlInput.value)) extract({ text: urlInput.value });
-        }, 0);
-      });
+    function bindAutoExtract(input, recognise) {
+      if (!input) return;
+      function maybe() {
+        if (recognise(input.value)) extract({ text: input.value });
+      }
+      input.addEventListener("change", maybe);
+      // paste fires before the value is updated; defer one tick.
+      input.addEventListener("paste", function () { setTimeout(maybe, 0); });
     }
 
+    bindAutoExtract(urlInput, looksLikeDoi);
+    bindAutoExtract(bibtexInput, looksLikeBibtex);
+
     if (bibtexInput) {
-      bibtexInput.addEventListener("change", function () {
-        if (looksLikeBibtex(bibtexInput.value)) extract({ text: bibtexInput.value });
-      });
-      bibtexInput.addEventListener("paste", function () {
-        setTimeout(function () {
-          if (looksLikeBibtex(bibtexInput.value)) extract({ text: bibtexInput.value });
-        }, 0);
-      });
       bibtexInput.addEventListener("dragover", function (e) {
         e.preventDefault();
         bibtexInput.classList.add("drag-over");

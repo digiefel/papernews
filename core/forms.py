@@ -1,3 +1,5 @@
+import re
+
 from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import UserCreationForm
@@ -109,9 +111,6 @@ class SubmissionForm(forms.ModelForm):
         raw = (self.cleaned_data.get("authors_text") or "").strip()
         if not raw:
             return []
-        # Split on ';' or ' and ' (case-insensitive).
-        import re
-
         parts = re.split(r"\s*;\s*|\s+and\s+", raw, flags=re.IGNORECASE)
         seen = set()
         result = []

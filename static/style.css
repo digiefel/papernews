@@ -345,13 +345,6 @@ form.stacked .file-drop input[type="file"],
   width: auto;
 }
 
-/* Inline notice inside the metadata fieldset */
-.meta-notice {
-  margin: 0.3rem 0 0.5rem;
-  font-size: 0.85em;
-  font-style: italic;
-}
-
 .meta {
   font-size: 0.85em;
   margin-top: 0.15rem;

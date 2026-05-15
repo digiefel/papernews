@@ -79,9 +79,9 @@ def _scopes_prefetch():
     )
 
 
-def _authors_prefetch():
+def _authors_prefetch(lookup="submission_authors"):
     return Prefetch(
-        "submission_authors",
+        lookup,
         queryset=SubmissionAuthor.objects.select_related("author"),
     )
 
@@ -444,12 +444,7 @@ def saved_page(request):
         .select_related(
             "submission", "submission__author", "submission__author__profile"
         )
-        .prefetch_related(
-            Prefetch(
-                "submission__submission_authors",
-                queryset=SubmissionAuthor.objects.select_related("author"),
-            )
-        )
+        .prefetch_related(_authors_prefetch("submission__submission_authors"))
         .annotate(vote_count=Count("submission__votes"))
         .order_by("-created")
     )

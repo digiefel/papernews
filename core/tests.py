@@ -606,13 +606,13 @@ class CitationsTests(TestCase):
         self.assertIsNone(normalize_doi(""))
         self.assertIsNone(normalize_doi(None))
 
-    def test_fetch_bibtex_for_doi_uses_content_negotiation(self):
+    def _patched_urlopen(self, body_bytes, captured=None):
         class FakeResp:
             status = 200
             headers = type("H", (), {"get_content_charset": lambda self: "utf-8"})()
 
-            def read(self):
-                return SAMPLE_BIBTEX.encode("utf-8")
+            def read(self, n=-1):
+                return body_bytes if n < 0 else body_bytes[:n]
 
             def __enter__(self):
                 return self
@@ -620,18 +620,32 @@ class CitationsTests(TestCase):
             def __exit__(self, *a):
                 pass
 
-        captured = {}
-
         def fake_urlopen(req, timeout=5):
-            captured["url"] = req.full_url
-            captured["accept"] = req.get_header("Accept")
+            if captured is not None:
+                captured["url"] = req.full_url
+                captured["accept"] = req.get_header("Accept")
             return FakeResp()
 
-        with patch("core.citations.urllib.request.urlopen", fake_urlopen):
+        return fake_urlopen
+
+    def test_fetch_bibtex_for_doi_uses_content_negotiation(self):
+        captured = {}
+        fake = self._patched_urlopen(SAMPLE_BIBTEX.encode("utf-8"), captured)
+        with patch("core.citations.urllib.request.urlopen", fake):
             body = fetch_bibtex_for_doi("10.1048/x.y")
         self.assertEqual(captured["url"], "https://doi.org/10.1048/x.y")
         self.assertEqual(captured["accept"], "application/x-bibtex")
         self.assertIn("A Mathematical Theory of Communication", body)
+
+    def test_fetch_bibtex_for_doi_rejects_oversize_response(self):
+        # A malicious redirect serving > _MAX_BIBTEX_RESPONSE_BYTES should be
+        # dropped rather than read fully into memory.
+        from .citations import _MAX_BIBTEX_RESPONSE_BYTES
+
+        huge = b"x" * (_MAX_BIBTEX_RESPONSE_BYTES + 100)
+        fake = self._patched_urlopen(huge)
+        with patch("core.citations.urllib.request.urlopen", fake):
+            self.assertIsNone(fetch_bibtex_for_doi("10.1048/x.y"))
 
     def test_extract_metadata_bibtex_path(self):
         meta, kind = extract_metadata(SAMPLE_BIBTEX)
