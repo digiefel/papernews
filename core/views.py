@@ -452,9 +452,7 @@ def leave_community(request, slug):
     ).first()
     if membership is None:
         return redirect(community.get_absolute_url())
-    # Moderators must step down first. This keeps the membership/moderator
-    # roster predictable: nobody can disappear from a community while still
-    # holding the moderator role.
+    # Moderators must step down first — keeps the moderator roster predictable.
     is_blocked = membership.is_moderator
     if request.method == "POST":
         if is_blocked:
@@ -474,26 +472,20 @@ def leave_community(request, slug):
         )
     else:
         body_text = "You can rejoin anytime."
-    return render(
+    return _render_action_confirm(
         request,
-        "core/community_action_confirm.html",
-        {
-            "community": community,
-            "accent_color": community.color,
-            "page_title": f"Leave c/{community.slug}",
-            "heading_prefix": "Leave",
-            "body_text": body_text,
-            "action_label": "leave",
-            "action_url": reverse(
-                "leave_community", args=[community.slug]
-            ),
-            "cancel_url": community.get_absolute_url(),
-            "is_blocked": is_blocked,
-            "block_text": (
-                "You're a moderator. Step down from moderator first, "
-                "then you can leave."
-            ),
-        },
+        community=community,
+        page_title=f"Leave c/{community.slug}",
+        heading_prefix="Leave",
+        body_text=body_text,
+        action_label="leave",
+        action_url=reverse("leave_community", args=[community.slug]),
+        cancel_url=community.get_absolute_url(),
+        is_blocked=is_blocked,
+        block_text=(
+            "You're a moderator. Step down from moderator first, "
+            "then you can leave."
+        ),
     )
 
 
@@ -529,12 +521,51 @@ def _moderated_community_or_404(user, slug):
     return community
 
 
+def _member_or_404(community, user_id):
+    return get_object_or_404(
+        CommunityMembership, community=community, user_id=user_id
+    )
+
+
+def _render_action_confirm(
+    request,
+    *,
+    community,
+    page_title,
+    heading_prefix,
+    body_text,
+    action_label,
+    action_url,
+    cancel_url,
+    is_blocked=False,
+    block_text="",
+):
+    return render(
+        request,
+        "core/community_action_confirm.html",
+        {
+            "community": community,
+            "accent_color": community.color,
+            "page_title": page_title,
+            "heading_prefix": heading_prefix,
+            "body_text": body_text,
+            "action_label": action_label,
+            "action_url": action_url,
+            "cancel_url": cancel_url,
+            "is_blocked": is_blocked,
+            "block_text": block_text,
+        },
+    )
+
+
+def _manage_url(community, fragment):
+    return reverse("community_manage", args=[community.slug]) + "#" + fragment
+
+
 def _manage_redirect(community, fragment):
     """Redirect to the manage page anchored at #fragment so a POST→GET cycle
     doesn't scroll the user back to the top of a long manage page."""
-    return HttpResponseRedirect(
-        reverse("community_manage", args=[community.slug]) + "#" + fragment
-    )
+    return HttpResponseRedirect(_manage_url(community, fragment))
 
 
 @login_required
@@ -592,9 +623,7 @@ def add_community_member(request, slug):
 @login_required
 def remove_community_member(request, slug, user_id):
     community = _moderated_community_or_404(request.user, slug)
-    membership = get_object_or_404(
-        CommunityMembership, community=community, user_id=user_id
-    )
+    membership = _member_or_404(community, user_id)
     if _would_orphan_community(community, membership):
         messages.error(request, "Can't remove the last moderator.")
     else:
@@ -608,32 +637,26 @@ def step_down_confirm(request, slug):
     demotion is the POST to toggle_community_moderator targeting the current
     user, so the rules stay in one place."""
     community = _moderated_community_or_404(request.user, slug)
-    membership = community.memberships.get(user=request.user)
-    return render(
+    # We're already proven to be a moderator by _moderated_community_or_404,
+    # so the orphan question reduces to: any *other* moderators?
+    is_only_mod = community.memberships.filter(is_moderator=True).count() <= 1
+    return _render_action_confirm(
         request,
-        "core/community_action_confirm.html",
-        {
-            "community": community,
-            "accent_color": community.color,
-            "page_title": f"Step down from moderating c/{community.slug}",
-            "heading_prefix": "Step down from moderating",
-            "body_text": (
-                "You'll stay a member but lose moderator privileges. "
-                "Another moderator can promote you again later."
-            ),
-            "action_label": "step down",
-            "action_url": reverse(
-                "toggle_community_moderator",
-                args=[community.slug, request.user.id],
-            ),
-            "cancel_url": reverse(
-                "community_manage", args=[community.slug]
-            ) + "#members",
-            "is_blocked": _would_orphan_community(community, membership),
-            "block_text": (
-                "You're the only moderator. Promote someone else first."
-            ),
-        },
+        community=community,
+        page_title=f"Step down from moderating c/{community.slug}",
+        heading_prefix="Step down from moderating",
+        body_text=(
+            "You'll stay a member but lose moderator privileges. "
+            "Another moderator can promote you again later."
+        ),
+        action_label="step down",
+        action_url=reverse(
+            "toggle_community_moderator",
+            args=[community.slug, request.user.id],
+        ),
+        cancel_url=_manage_url(community, "members"),
+        is_blocked=is_only_mod,
+        block_text="You're the only moderator. Promote someone else first.",
     )
 
 
@@ -641,9 +664,7 @@ def step_down_confirm(request, slug):
 @login_required
 def toggle_community_moderator(request, slug, user_id):
     community = _moderated_community_or_404(request.user, slug)
-    membership = get_object_or_404(
-        CommunityMembership, community=community, user_id=user_id
-    )
+    membership = _member_or_404(community, user_id)
     if membership.is_moderator:
         # Demoting — protect the last-moderator invariant (also blocks a
         # sole mod from stepping themselves down).

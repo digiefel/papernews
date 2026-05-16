@@ -15,29 +15,7 @@
       <span class="muted">Used in URLs like c/your-community. Can't be changed later.</span>
       {{ form.slug.errors }}
     </p>
-    <p>
-      <label for="{{ form.name.id_for_label }}">Name</label>
-      {{ form.name }}
-      {{ form.name.errors }}
-    </p>
-    <p>
-      <label for="{{ form.description.id_for_label }}">Description</label>
-      {{ form.description }}
-      {{ form.description.errors }}
-    </p>
-    <p>
-      <label for="{{ form.color.id_for_label }}">Accent color</label>
-      {{ form.color }}
-      {{ form.color.errors }}
-    </p>
-    {% if form.is_private %}
-      <p>
-        <label>{{ form.is_private }} private (members only)</label>
-        {{ form.is_private.errors }}
-      </p>
-    {% else %}
-      <p class="muted">Your community will be invite-only. Contact us to create a new one.</p>
-    {% endif %}
+    {% include "core/_community_settings_fields.html" with privacy_locked_text="Your community will be invite-only. Contact us to create a new one." %}
     <button type="submit">create</button>
   </form>
 {% endblock %}

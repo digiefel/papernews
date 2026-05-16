@@ -7,7 +7,13 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 
 from .citations import normalize_doi
-from .models import Comment, Community, Submission, SubmissionScope
+from .models import (
+    Comment,
+    Community,
+    CommunityMembership,
+    Submission,
+    SubmissionScope,
+)
 from .visibility import writable_communities_for
 
 
@@ -54,9 +60,6 @@ class AddMemberForm(forms.Form):
         self.community = community
 
     def clean_username(self):
-        from django.contrib.auth import get_user_model
-        from .models import CommunityMembership
-
         User = get_user_model()
         username = self.cleaned_data["username"].strip()
         try:

@@ -14,29 +14,7 @@
     <form class="stacked" method="post">
       {% csrf_token %}
       {{ form.non_field_errors }}
-      <p>
-        <label for="{{ form.name.id_for_label }}">Name</label>
-        {{ form.name }}
-        {{ form.name.errors }}
-      </p>
-      <p>
-        <label for="{{ form.description.id_for_label }}">Description</label>
-        {{ form.description }}
-        {{ form.description.errors }}
-      </p>
-      <p>
-        <label for="{{ form.color.id_for_label }}">Accent color</label>
-        {{ form.color }}
-        {{ form.color.errors }}
-      </p>
-      {% if form.is_private %}
-        <p>
-          <label>{{ form.is_private }} private (members only)</label>
-          {{ form.is_private.errors }}
-        </p>
-      {% else %}
-        <p class="muted">Privacy is locked to <strong>{% if community.is_private %}private{% else %}public{% endif %}</strong>. Only site admins can change it.</p>
-      {% endif %}
+      {% include "core/_community_settings_fields.html" with privacy_locked_text="Privacy is locked. Only site admins can change it." %}
       <button type="submit">save</button>
     </form>
   </section>

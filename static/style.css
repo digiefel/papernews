@@ -434,9 +434,6 @@ button[type="submit"] {
 
 .community-header-actions {
   flex-shrink: 0;
-}
-
-.community-header-actions {
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
