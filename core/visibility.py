@@ -12,16 +12,16 @@ def visible_communities_for(user):
 
 
 def writable_communities_for(user):
-    """Communities the user is allowed to post into.
+    """Communities the user is allowed to post or reply in.
 
-    Public communities are open to any logged-in user; private ones require
-    membership.
+    Membership is the gate for both public and private communities: anyone
+    can *read* a public community, but posting/replying requires joining.
+    This keeps submit and reply scope pickers focused on the user's chosen
+    spaces instead of every public community on the site.
     """
     if not user.is_authenticated:
         return Community.objects.none()
-    return Community.objects.filter(
-        Q(is_private=False) | Q(memberships__user=user)
-    ).distinct()
+    return Community.objects.filter(memberships__user=user).distinct()
 
 
 def visible_submissions_for(user):

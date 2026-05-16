@@ -78,7 +78,7 @@ class CommunityMembershipInline(admin.TabularInline):
 
 @admin.register(Community)
 class CommunityAdmin(admin.ModelAdmin):
-    list_display = ("slug", "name", "is_private", "created")
+    list_display = ("slug", "name", "is_private", "color", "created")
     list_filter = ("is_private",)
     search_fields = ("slug", "name")
     prepopulated_fields = {"slug": ("name",)}

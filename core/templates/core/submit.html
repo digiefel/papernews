@@ -15,10 +15,21 @@
       <p>
         <label>{{ form.post_globally }} {{ form.post_globally.label }}</label>
       </p>
-      {% if form.communities.field.queryset.exists %}
-        <p class="muted">{{ form.communities.label }}:</p>
-        {{ form.communities }}
-      {% endif %}
+      {% with choices=form.community_choices %}
+        {% if choices %}
+          <p class="muted">{{ form.communities.label }}:</p>
+          <ul class="community-checkboxes">
+            {% for community, is_selected in choices %}
+              <li>
+                <label>
+                  <input type="checkbox" name="communities" value="{{ community.pk }}"{% if is_selected %} checked{% endif %}>
+                  {% include "core/_community_link.html" %}
+                </label>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endwith %}
       {{ form.communities.errors }}
     </fieldset>
 

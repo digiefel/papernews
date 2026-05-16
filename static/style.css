@@ -1,8 +1,12 @@
+:root {
+  --accent: #bbbbee;
+}
+
 body {
   font-family: Verdana, Geneva, sans-serif;
   font-size: 14px;
   color: #222;
-  background: #f6f6ef;
+  background-color: #f6f6ef;
   margin: 0;
 }
 
@@ -27,8 +31,8 @@ h1 {
 
 /* Header */
 header {
-  background: #fff5e6;
-  border-bottom: 2px solid #ff6600;
+  background: hsl(from var(--accent) h s l / 10%);
+  border-bottom: 2px solid var(--accent);
 }
 
 header nav {
@@ -103,7 +107,7 @@ header nav .spacer {
 }
 
 .upvote:hover {
-  color: #ff6600;
+  color: var(--accent);
 }
 
 form.inline {
@@ -122,7 +126,7 @@ form.inline {
 }
 
 .linkbtn:hover {
-  color: #ff6600;
+  color: var(--accent);
 }
 
 .verified {
@@ -166,6 +170,32 @@ form.stacked {
   margin: 0 0 0.3rem;
 }
 
+fieldset.reply-scope {
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+fieldset.reply-scope legend {
+  padding: 0;
+  float: left;
+  margin-right: 0.4rem;
+}
+
+fieldset.reply-scope label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+fieldset.reply-scope input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+
 .reply-link {
   font-size: 0.85em;
   margin-top: 0.25rem;
@@ -177,7 +207,7 @@ form.stacked {
 }
 
 .reply-link a:hover {
-  color: #ff6600;
+  color: var(--accent);
 }
 
 .thread-divider {
@@ -300,7 +330,7 @@ details.metadata > summary:hover {
 }
 
 .bibtex-body textarea.drag-over {
-  outline: 2px dashed #ff6600;
+  outline: 2px dashed var(--accent);
   outline-offset: 1px;
   background: #fff8f0;
 }
@@ -378,6 +408,69 @@ button[type="submit"] {
   margin: 1rem 0;
   display: flex;
   gap: 0.75rem;
+}
+
+/* Community accent */
+.community-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.community-header-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.community-header-main h1 {
+  margin-top: 0;
+}
+
+.community-header-main p {
+  margin: auto;
+}
+
+.community-header-actions {
+  flex-shrink: 0;
+}
+
+.community-header-actions form {
+  display: inline;
+  margin: 0;
+}
+
+.community-link {
+  text-decoration: underline;
+  text-decoration-color: var(--community-color, var(--accent));
+  text-decoration-thickness: 0.12em;
+  /* text-underline-offset: 0.18em; */
+  /* text-decoration-skip-ink: none; */
+}
+
+.community-link:hover {
+  text-decoration-thickness: 0.22em;
+}
+
+.communities li {
+  padding: 0.15rem 0;
+}
+
+ul.community-checkboxes {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0 0.5rem;
+}
+
+ul.community-checkboxes li {
+  margin: 0.15rem 0;
+}
+
+ul.community-checkboxes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .messages {

@@ -11,7 +11,7 @@
     {{ form.non_field_errors }}
     <p class="reply-scope muted">
       {% if parent.scope_community %}
-        Reply in <a href="{{ parent.scope_community.get_absolute_url }}">c/{{ parent.scope_community.slug }}</a>
+        Reply in {% include "core/_community_link.html" with community=parent.scope_community %}
       {% else %}
         Reply globally
       {% endif %}

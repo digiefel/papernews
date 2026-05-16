@@ -4,11 +4,30 @@
 
 {% block content %}
   <header class="community-header">
-    <h1>c/{{ community.slug }}</h1>
-    <p class="muted">{{ community.name }}{% if community.is_private %} &middot; private{% endif %}</p>
-    {% if community.description %}
-      <p>{{ community.description }}</p>
-    {% endif %}
+    <div class="community-header-main">
+      <h1>{% include "core/_community_link.html" %}</h1>
+      <p class="muted">{{ community.name }}{% if community.is_private %} &middot; private{% endif %}</p>
+      {% if community.description %}
+        <p>{{ community.description }}</p>
+      {% endif %}
+    </div>
+    <div class="community-header-actions">
+      {% if user.is_authenticated %}
+        {% if is_member %}
+          <form method="post" action="{% url 'leave_community' community.slug %}">
+            {% csrf_token %}
+            <button type="submit" class="linkbtn">joined</button>
+          </form>
+        {% elif not community.is_private %}
+          <form method="post" action="{% url 'join_community' community.slug %}">
+            {% csrf_token %}
+            <button type="submit" class="linkbtn"><b>join</b></button>
+          </form>
+        {% endif %}
+      {% elif not community.is_private %}
+        <a href="{% url 'login' %}?next={{ request.path }}">log in to join</a>
+      {% endif %}
+    </div>
   </header>
 
   {% for submission in page_obj %}

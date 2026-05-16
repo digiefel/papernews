@@ -413,6 +413,10 @@ class VisibilityTests(TestCase):
             author=self.author,
             communities=[self.public_community],
         )
+        # Member must have joined c/ml-systems to be able to reply there.
+        CommunityMembership.objects.create(
+            community=self.public_community, user=self.member
+        )
         # Member visits via ?in=ml-systems → dropdown default = c/ml-systems.
         self.client.force_login(self.member)
         resp = self.client.get(f"{s.get_absolute_url()}?in=ml-systems")
@@ -556,6 +560,96 @@ class VisibilityTests(TestCase):
         # Form should reject the choice (queryset is restricted to writable communities)
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(Submission.objects.filter(title="intruder").exists())
+
+    def test_submit_to_public_you_havent_joined_fails(self):
+        # Membership now gates posting into public communities too.
+        self.client.force_login(self.outsider)
+        resp = self.client.post(
+            "/submit/",
+            {
+                "title": "drive-by",
+                "url": "",
+                "body": "hi",
+                "communities": [self.public_community.pk],
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Submission.objects.filter(title="drive-by").exists())
+
+    def test_join_public_community_creates_membership(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.post(f"/c/{self.public_community.slug}/join/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.public_community, user=self.outsider
+            ).exists()
+        )
+
+    def test_join_public_is_idempotent(self):
+        CommunityMembership.objects.create(
+            community=self.public_community, user=self.outsider
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.post(f"/c/{self.public_community.slug}/join/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            CommunityMembership.objects.filter(
+                community=self.public_community, user=self.outsider
+            ).count(),
+            1,
+        )
+
+    def test_join_private_community_404(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.post(f"/c/{self.private_community.slug}/join/")
+        self.assertEqual(resp.status_code, 404)
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.private_community, user=self.outsider
+            ).exists()
+        )
+
+    def test_join_requires_login(self):
+        resp = self.client.post(f"/c/{self.public_community.slug}/join/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+
+    def test_leave_public_deletes_membership(self):
+        CommunityMembership.objects.create(
+            community=self.public_community, user=self.outsider
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.post(f"/c/{self.public_community.slug}/leave/")
+        self.assertRedirects(resp, f"/c/{self.public_community.slug}/")
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.public_community, user=self.outsider
+            ).exists()
+        )
+
+    def test_leave_private_redirects_to_index(self):
+        self.client.force_login(self.member)
+        resp = self.client.post(f"/c/{self.private_community.slug}/leave/")
+        self.assertRedirects(resp, "/communities/")
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.private_community, user=self.member
+            ).exists()
+        )
+
+    def test_community_page_shows_join_button_for_non_member(self):
+        self.client.force_login(self.outsider)
+        resp = self.client.get(f"/c/{self.public_community.slug}/")
+        self.assertContains(resp, f'action="/c/{self.public_community.slug}/join/"')
+
+    def test_community_page_shows_leave_button_for_member(self):
+        CommunityMembership.objects.create(
+            community=self.public_community, user=self.outsider
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.get(f"/c/{self.public_community.slug}/")
+        self.assertContains(resp, f'action="/c/{self.public_community.slug}/leave/"')
 
 
 SAMPLE_BIBTEX = """@article{shannon1948,
