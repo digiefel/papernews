@@ -9,7 +9,7 @@
     </div>
   </header>
 
-  <section class="manage-section">
+  <section class="manage-section" id="settings">
     <h2>Settings</h2>
     <form class="stacked" method="post">
       {% csrf_token %}
@@ -41,7 +41,7 @@
     </form>
   </section>
 
-  <section class="manage-section">
+  <section class="manage-section" id="members">
     <h2>Members</h2>
     <form class="add-member" method="post" action="{% url 'add_community_member' community.slug %}">
       {% csrf_token %}

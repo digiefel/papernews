@@ -6,7 +6,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -507,6 +507,14 @@ def _moderated_community_or_404(user, slug):
     return community
 
 
+def _manage_redirect(community, fragment):
+    """Redirect to the manage page anchored at #fragment so a POST→GET cycle
+    doesn't scroll the user back to the top of a long manage page."""
+    return HttpResponseRedirect(
+        reverse("community_manage", args=[community.slug]) + "#" + fragment
+    )
+
+
 @login_required
 def community_manage(request, slug):
     community = _moderated_community_or_404(request.user, slug)
@@ -517,7 +525,7 @@ def community_manage(request, slug):
         if form.is_valid():
             form.save()
             messages.success(request, "Community updated.")
-            return redirect("community_manage", slug=community.slug)
+            return _manage_redirect(community, "settings")
     else:
         form = CommunityEditForm(instance=community, user=request.user)
     members = (
@@ -555,7 +563,7 @@ def add_community_member(request, slug):
         for errors in form.errors.values():
             for err in errors:
                 messages.error(request, err)
-    return redirect("community_manage", slug=community.slug)
+    return _manage_redirect(community, "members")
 
 
 @require_POST
@@ -569,7 +577,7 @@ def remove_community_member(request, slug, user_id):
         messages.error(request, "Can't remove the last moderator.")
     else:
         membership.delete()
-    return redirect("community_manage", slug=community.slug)
+    return _manage_redirect(community, "members")
 
 
 @require_POST
