@@ -17,4 +17,6 @@ urlpatterns = [
     path("signup/", views.signup, name="signup"),
     path("communities/", views.communities_index, name="communities"),
     path("c/<slug:slug>/", views.community_detail, name="community_detail"),
+    path("c/<slug:slug>/join/", views.join_community, name="join_community"),
+    path("c/<slug:slug>/leave/", views.leave_community, name="leave_community"),
 ]

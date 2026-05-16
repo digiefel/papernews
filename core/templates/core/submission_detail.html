@@ -38,15 +38,16 @@
     <form class="comment-form" method="post" action="{{ submission.get_absolute_url }}">
       {% csrf_token %}
       {{ form.non_field_errors }}
-      <p class="reply-scope muted">
-        <label for="id_scope">Reply in:</label>
-        <select name="scope" id="id_scope"{% if form.scope.field.disabled %} disabled{% endif %}>
-          {% for opt in form.scope_options %}
-            <option value="{{ opt.value }}"{% if opt.value == form.scope.value|stringformat:'s' %} selected{% endif %}{% if opt.color %} style="color: {{ opt.color }}"{% endif %}>{{ opt.label }}</option>
-          {% endfor %}
-        </select>
+      <fieldset class="reply-scope">
+        <legend class="muted">Reply in</legend>
+        {% for opt in form.scope_options %}
+          <label>
+            <input type="radio" name="scope" value="{{ opt.value }}"{% if opt.value == form.scope.value|stringformat:'s' %} checked{% endif %}{% if form.scope.field.disabled %} disabled{% endif %}>
+            {% if opt.color %}<span class="community-link" style="--community-color: {{ opt.color }}">{{ opt.label }}</span>{% else %}{{ opt.label }}{% endif %}
+          </label>
+        {% endfor %}
         {{ form.scope.errors }}
-      </p>
+      </fieldset>
       {{ form.body }}
       {{ form.body.errors }}
       <button type="submit">add comment</button>

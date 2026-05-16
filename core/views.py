@@ -28,6 +28,7 @@ from .models import (
     CommentScope,
     CommentVote,
     Community,
+    CommunityMembership,
     Save,
     Submission,
     SubmissionAuthor,
@@ -397,6 +398,12 @@ def community_detail(request, slug):
         .distinct()
     )
     page = Paginator(qs, PAGE_SIZE).get_page(request.GET.get("page"))
+    is_member = (
+        request.user.is_authenticated
+        and CommunityMembership.objects.filter(
+            community=community, user=request.user
+        ).exists()
+    )
     return render(
         request,
         "core/community_detail.html",
@@ -404,8 +411,35 @@ def community_detail(request, slug):
             "community": community,
             "page_obj": page,
             "accent_color": community.color,
+            "is_member": is_member,
         },
     )
+
+
+@require_POST
+@login_required
+def join_community(request, slug):
+    # Public-only: private communities require an invite (no self-join in v1).
+    community = get_object_or_404(Community, slug=slug, is_private=False)
+    CommunityMembership.objects.get_or_create(
+        community=community, user=request.user
+    )
+    return redirect(community.get_absolute_url())
+
+
+@require_POST
+@login_required
+def leave_community(request, slug):
+    # Leaving is allowed for both public and private. After leaving a private
+    # community the user can no longer see it; redirect them to the index so
+    # they don't land on a 404 right after their own action.
+    community = get_object_or_404(Community, slug=slug)
+    CommunityMembership.objects.filter(
+        community=community, user=request.user
+    ).delete()
+    if community.is_private:
+        return redirect("communities")
+    return redirect(community.get_absolute_url())
 
 
 @require_POST
