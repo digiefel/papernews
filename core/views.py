@@ -400,7 +400,11 @@ def community_detail(request, slug):
     return render(
         request,
         "core/community_detail.html",
-        {"community": community, "page_obj": page},
+        {
+            "community": community,
+            "page_obj": page,
+            "accent_color": community.color,
+        },
     )
 
 

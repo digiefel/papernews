@@ -11,7 +11,7 @@
         <span class="username">{{ comment.author.username }}</span>{% if comment.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
         {{ comment.created|timesince }} ago
         {% if comment.scope_community %}
-          | in <a href="{{ comment.scope_community.get_absolute_url }}">c/{{ comment.scope_community.slug }}</a>
+          | in {% include "core/_community_link.html" with community=comment.scope_community %}
         {% endif %}
         {% if show_on_link %}
           | on: <a href="{{ submission.get_absolute_url }}">{{ submission.title }}</a>

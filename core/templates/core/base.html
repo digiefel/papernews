@@ -7,7 +7,7 @@
   <script>document.documentElement.classList.replace("no-js", "js");</script>
   <link rel="stylesheet" href="{% static 'style.css' %}">
 </head>
-<body>
+<body{% if accent_color %} style="--accent: {{ accent_color }}"{% endif %}>
   <header>
     <nav>
       <a class="logo" href="{% url 'home' %}">Papernews</a>

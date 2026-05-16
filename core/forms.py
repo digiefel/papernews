@@ -74,6 +74,15 @@ class SubmissionForm(forms.ModelForm):
         self.user = user
         self.fields["communities"].queryset = writable_communities_for(user)
 
+    def community_choices(self):
+        """List of (community, is_selected) for manual checkbox rendering."""
+        raw = self["communities"].value() or []
+        selected = {str(v) for v in raw}
+        return [
+            (c, str(c.pk) in selected)
+            for c in self.fields["communities"].queryset
+        ]
+
     def clean_url(self):
         raw = (self.cleaned_data.get("url") or "").strip()
         if not raw:
@@ -182,13 +191,23 @@ class CommentForm(forms.ModelForm):
         in_submission.sort(key=lambda c: c.slug)
         side_channel.sort(key=lambda c: c.slug)
 
+        # Build two parallel structures: `choices` for Django's ChoiceField
+        # validation, and `scope_options` (with color) for manual template
+        # rendering so per-option color can be inlined on <option>.
         choices = []
+        self.scope_options = []
         if submission_global:
             choices.append((GLOBAL_SCOPE_VALUE, "global"))
-        for c in in_submission:
-            choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
-        for c in side_channel:
-            choices.append((_community_scope_value(c.id), f"c/{c.slug}"))
+            self.scope_options.append(
+                {"value": GLOBAL_SCOPE_VALUE, "label": "global", "color": None}
+            )
+        for c in in_submission + side_channel:
+            value = _community_scope_value(c.id)
+            label = f"c/{c.slug}"
+            choices.append((value, label))
+            self.scope_options.append(
+                {"value": value, "label": label, "color": c.color}
+            )
 
         self.fields["scope"].choices = choices
         if not choices:

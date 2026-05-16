@@ -26,9 +26,9 @@
           <button type="submit" class="linkbtn">{% if submission.is_saved %}unsave{% else %}save{% endif %}</button>
         </form>
       {% endif %}
-      {% for scope in submission.scopes.all %}{% if scope.community_id %}
-        | in <a href="{{ scope.community.get_absolute_url }}">c/{{ scope.community.slug }}</a>
-      {% endif %}{% endfor %}
+      {% if submission.community_scopes %}
+        | in {% for scope in submission.community_scopes %}{% include "core/_community_link.html" with community=scope.community %}{% if not forloop.last %}, {% endif %}{% endfor %}
+      {% endif %}
     </div>
     {% include "core/_submission_meta.html" %}
   </div>

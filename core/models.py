@@ -2,9 +2,16 @@ from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Q
 from django.urls import reverse
+
+
+HEX_COLOR_VALIDATOR = RegexValidator(
+    regex=r"^#[0-9a-fA-F]{6}$",
+    message="Use a 6-digit hex color like #ff6600.",
+)
 
 
 class Profile(models.Model):
@@ -53,6 +60,11 @@ class Submission(models.Model):
     @property
     def kind(self):
         return "link" if self.url else "text"
+
+    @property
+    def community_scopes(self):
+        # Relies on prefetched scopes + select_related("community"); no extra queries.
+        return [s for s in self.scopes.all() if s.community_id]
 
     @property
     def domain(self):
@@ -164,6 +176,12 @@ class Community(models.Model):
     name = models.CharField(max_length=80)
     description = models.TextField(blank=True)
     is_private = models.BooleanField(default=False)
+    color = models.CharField(
+        max_length=7,
+        default="#ff6600",
+        validators=[HEX_COLOR_VALIDATOR],
+        help_text="Accent color shown on the community page and listings.",
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
