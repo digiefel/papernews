@@ -1081,6 +1081,84 @@ class CommunityModerationTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp["Location"])
 
+    def test_moderator_can_promote_member(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.member.id}/toggle-mod/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.member
+        )
+        self.assertTrue(membership.is_moderator)
+
+    def test_moderator_can_demote_another_moderator(self):
+        CommunityMembership.objects.create(
+            community=self.community, user=self.other_mod, is_moderator=True
+        )
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.other_mod.id}/toggle-mod/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.other_mod
+        )
+        self.assertFalse(membership.is_moderator)
+
+    def test_cannot_demote_last_moderator(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.mod.id}/toggle-mod/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.mod
+        )
+        self.assertTrue(membership.is_moderator)
+
+    def test_moderator_can_step_down_when_another_mod_exists(self):
+        CommunityMembership.objects.create(
+            community=self.community, user=self.other_mod, is_moderator=True
+        )
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.mod.id}/toggle-mod/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.mod
+        )
+        self.assertFalse(membership.is_moderator)
+
+    def test_non_moderator_cannot_toggle_mod(self):
+        self.client.force_login(self.member)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.mod.id}/toggle-mod/"
+        )
+        self.assertEqual(resp.status_code, 404)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.mod
+        )
+        self.assertTrue(membership.is_moderator)
+
+    def test_manage_page_shows_promote_button_for_regular_member(self):
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/manage/")
+        self.assertContains(resp, "make moderator")
+        self.assertContains(
+            resp,
+            f'action="/c/{self.community.slug}/members/{self.member.id}/toggle-mod/"',
+        )
+
+    def test_manage_page_shows_step_down_for_self_mod(self):
+        CommunityMembership.objects.create(
+            community=self.community, user=self.other_mod, is_moderator=True
+        )
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/manage/")
+        self.assertContains(resp, "step down")
+
 
 SAMPLE_BIBTEX = """@article{shannon1948,
   title = {A Mathematical Theory of Communication},

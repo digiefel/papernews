@@ -582,6 +582,33 @@ def remove_community_member(request, slug, user_id):
 
 @require_POST
 @login_required
+def toggle_community_moderator(request, slug, user_id):
+    community = _moderated_community_or_404(request.user, slug)
+    membership = get_object_or_404(
+        CommunityMembership, community=community, user_id=user_id
+    )
+    if membership.is_moderator:
+        # Demoting — protect the last-moderator invariant (also blocks a
+        # sole mod from stepping themselves down).
+        if _would_orphan_community(community, membership):
+            messages.error(request, "Can't demote the last moderator.")
+        else:
+            membership.is_moderator = False
+            membership.save(update_fields=["is_moderator"])
+            messages.success(
+                request, f"Demoted {membership.user.username}."
+            )
+    else:
+        membership.is_moderator = True
+        membership.save(update_fields=["is_moderator"])
+        messages.success(
+            request, f"Promoted {membership.user.username} to moderator."
+        )
+    return _manage_redirect(community, "members")
+
+
+@require_POST
+@login_required
 def vote_submission(request, pk):
     submission = get_object_or_404(
         visible_submissions_for(request.user), pk=pk

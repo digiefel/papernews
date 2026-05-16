@@ -31,4 +31,9 @@ urlpatterns = [
         views.remove_community_member,
         name="remove_community_member",
     ),
+    path(
+        "c/<slug:slug>/members/<int:user_id>/toggle-mod/",
+        views.toggle_community_moderator,
+        name="toggle_community_moderator",
+    ),
 ]
