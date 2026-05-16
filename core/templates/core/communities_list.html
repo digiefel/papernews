@@ -4,8 +4,10 @@
 
 {% block content %}
   <h1>Communities</h1>
+  {% if user.is_authenticated %}
+    <p class="muted">Browse below, or <a href="{% url 'create_community' %}">create a new community</a>.</p>
+  {% endif %}
   <ul class="communities">
-  {% if user.is_authenticated %}<li><a class="create-link" href="{% url 'create_community' %}">create new</a></li>{% endif %}
     {% for community in communities %}
       <li>
         {% include "core/_community_link.html" %}
