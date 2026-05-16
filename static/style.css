@@ -492,7 +492,7 @@ button[type="submit"] {
   margin: 0;
 }
 
-.leave-confirm {
+.action-confirm {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;

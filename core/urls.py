@@ -36,4 +36,9 @@ urlpatterns = [
         views.toggle_community_moderator,
         name="toggle_community_moderator",
     ),
+    path(
+        "c/<slug:slug>/step-down/",
+        views.step_down_confirm,
+        name="step_down_confirm",
+    ),
 ]

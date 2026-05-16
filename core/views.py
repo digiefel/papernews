@@ -452,25 +452,47 @@ def leave_community(request, slug):
     ).first()
     if membership is None:
         return redirect(community.get_absolute_url())
-    would_orphan = _would_orphan_community(community, membership)
+    # Moderators must step down first. This keeps the membership/moderator
+    # roster predictable: nobody can disappear from a community while still
+    # holding the moderator role.
+    is_blocked = membership.is_moderator
     if request.method == "POST":
-        if would_orphan:
+        if is_blocked:
             messages.error(
                 request,
-                "You're the only moderator — promote someone else before leaving.",
+                "You're a moderator — step down before leaving.",
             )
             return redirect(community.get_absolute_url())
         membership.delete()
         if community.is_private:
             return redirect("communities")
         return redirect(community.get_absolute_url())
+    if community.is_private:
+        body_text = (
+            "This is a private community. You won't be able to rejoin "
+            "without an invite."
+        )
+    else:
+        body_text = "You can rejoin anytime."
     return render(
         request,
-        "core/community_leave_confirm.html",
+        "core/community_action_confirm.html",
         {
             "community": community,
-            "would_orphan": would_orphan,
             "accent_color": community.color,
+            "page_title": f"Leave c/{community.slug}",
+            "heading_prefix": "Leave",
+            "body_text": body_text,
+            "action_label": "leave",
+            "action_url": reverse(
+                "leave_community", args=[community.slug]
+            ),
+            "cancel_url": community.get_absolute_url(),
+            "is_blocked": is_blocked,
+            "block_text": (
+                "You're a moderator. Step down from moderator first, "
+                "then you can leave."
+            ),
         },
     )
 
@@ -578,6 +600,41 @@ def remove_community_member(request, slug, user_id):
     else:
         membership.delete()
     return _manage_redirect(community, "members")
+
+
+@login_required
+def step_down_confirm(request, slug):
+    """GET-only confirm page for stepping down as moderator. The actual
+    demotion is the POST to toggle_community_moderator targeting the current
+    user, so the rules stay in one place."""
+    community = _moderated_community_or_404(request.user, slug)
+    membership = community.memberships.get(user=request.user)
+    return render(
+        request,
+        "core/community_action_confirm.html",
+        {
+            "community": community,
+            "accent_color": community.color,
+            "page_title": f"Step down from moderating c/{community.slug}",
+            "heading_prefix": "Step down from moderating",
+            "body_text": (
+                "You'll stay a member but lose moderator privileges. "
+                "Another moderator can promote you again later."
+            ),
+            "action_label": "step down",
+            "action_url": reverse(
+                "toggle_community_moderator",
+                args=[community.slug, request.user.id],
+            ),
+            "cancel_url": reverse(
+                "community_manage", args=[community.slug]
+            ) + "#members",
+            "is_blocked": _would_orphan_community(community, membership),
+            "block_text": (
+                "You're the only moderator. Promote someone else first."
+            ),
+        },
+    )
 
 
 @require_POST

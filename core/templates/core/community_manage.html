@@ -56,10 +56,8 @@
           {% if m.is_moderator %}<span class="muted">&middot; moderator</span>{% endif %}
           {% if m.user_id == user.id %}
             {% if m.is_moderator %}
-              <form class="inline" method="post" action="{% url 'toggle_community_moderator' community.slug m.user_id %}">
-                {% csrf_token %}
-                <button type="submit" class="linkbtn">step down</button>
-              </form>
+              {# Two-step confirm so it works without JS. #}
+              <a href="{% url 'step_down_confirm' community.slug %}">step down</a>
             {% endif %}
             <span class="muted">(you)</span>
           {% else %}

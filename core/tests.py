@@ -710,8 +710,9 @@ class VisibilityTests(TestCase):
             ).exists()
         )
 
-    def test_leave_get_for_last_mod_shows_block_message(self):
-        # mod role on the public community for variety; same logic applies.
+    def test_leave_get_for_moderator_shows_step_down_block(self):
+        # Moderators must step down first regardless of whether other mods
+        # exist — keeps the membership/moderator roster predictable.
         only_mod = User.objects.create_user("solo", password="pw-test-12345")
         CommunityMembership.objects.create(
             community=self.public_community, user=only_mod, is_moderator=True
@@ -719,7 +720,38 @@ class VisibilityTests(TestCase):
         self.client.force_login(only_mod)
         resp = self.client.get(f"/c/{self.public_community.slug}/leave/")
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "only moderator")
+        self.assertContains(resp, "Step down from moderator")
+
+    def test_leave_post_by_moderator_refuses(self):
+        only_mod = User.objects.create_user("solo", password="pw-test-12345")
+        CommunityMembership.objects.create(
+            community=self.public_community, user=only_mod, is_moderator=True
+        )
+        self.client.force_login(only_mod)
+        resp = self.client.post(f"/c/{self.public_community.slug}/leave/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.public_community, user=only_mod
+            ).exists()
+        )
+
+    def test_leave_post_by_non_last_moderator_also_refuses(self):
+        # Even when other mods exist, a moderator must step down first.
+        co_mod = User.objects.create_user("co", password="pw-test-12345")
+        for u in (self.outsider, co_mod):
+            CommunityMembership.objects.create(
+                community=self.public_community, user=u, is_moderator=True
+            )
+        self.client.force_login(self.outsider)
+        resp = self.client.post(f"/c/{self.public_community.slug}/leave/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.public_community, user=self.outsider
+            ).exists()
+        )
+
 
     def test_leave_link_on_private_community_page(self):
         CommunityMembership.objects.create(
@@ -1158,6 +1190,45 @@ class CommunityModerationTests(TestCase):
         self.client.force_login(self.mod)
         resp = self.client.get(f"/c/{self.community.slug}/manage/")
         self.assertContains(resp, "step down")
+        # Step down goes via a confirm page (link), not a direct POST form.
+        self.assertContains(resp, f'href="/c/{self.community.slug}/step-down/"')
+
+    def test_step_down_confirm_renders_for_mod(self):
+        CommunityMembership.objects.create(
+            community=self.community, user=self.other_mod, is_moderator=True
+        )
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/step-down/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Step down from moderating")
+        # The confirm form POSTs into the same toggle endpoint so the
+        # last-mod / promote-demote rules stay in one place.
+        self.assertContains(
+            resp,
+            f'action="/c/{self.community.slug}/members/{self.mod.id}/toggle-mod/"',
+        )
+        # No demotion yet.
+        self.assertTrue(
+            CommunityMembership.objects.get(
+                community=self.community, user=self.mod
+            ).is_moderator
+        )
+
+    def test_step_down_confirm_shows_orphan_message_for_last_mod(self):
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/step-down/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "only moderator")
+
+    def test_step_down_confirm_404_for_non_mod(self):
+        self.client.force_login(self.member)
+        resp = self.client.get(f"/c/{self.community.slug}/step-down/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_step_down_confirm_requires_login(self):
+        resp = self.client.get(f"/c/{self.community.slug}/step-down/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
 
 
 SAMPLE_BIBTEX = """@article{shannon1948,
