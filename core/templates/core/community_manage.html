@@ -1,0 +1,69 @@
+{% extends "core/base.html" %}
+
+{% block title %}Manage c/{{ community.slug }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <header class="community-header">
+    <div class="community-header-main">
+      <h1>Manage {% include "core/_community_link.html" %}</h1>
+    </div>
+  </header>
+
+  <section class="manage-section">
+    <h2>Settings</h2>
+    <form class="stacked" method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      <p>
+        <label for="{{ form.name.id_for_label }}">Name</label>
+        {{ form.name }}
+        {{ form.name.errors }}
+      </p>
+      <p>
+        <label for="{{ form.description.id_for_label }}">Description</label>
+        {{ form.description }}
+        {{ form.description.errors }}
+      </p>
+      <p>
+        <label for="{{ form.color.id_for_label }}">Accent color</label>
+        {{ form.color }}
+        {{ form.color.errors }}
+      </p>
+      {% if form.is_private %}
+        <p>
+          <label>{{ form.is_private }} private (members only)</label>
+          {{ form.is_private.errors }}
+        </p>
+      {% else %}
+        <p class="muted">Privacy is locked to <strong>{% if community.is_private %}private{% else %}public{% endif %}</strong>. Only site admins can change it.</p>
+      {% endif %}
+      <button type="submit">save</button>
+    </form>
+  </section>
+
+  <section class="manage-section">
+    <h2>Members</h2>
+    <form class="add-member" method="post" action="{% url 'add_community_member' community.slug %}">
+      {% csrf_token %}
+      <input type="text" name="username" placeholder="username" autocomplete="off" required>
+      <label><input type="checkbox" name="is_moderator"> as moderator</label>
+      <button type="submit">add</button>
+    </form>
+    <ul class="member-list">
+      {% for m in members %}
+        <li>
+          <a href="{% url 'user_page' m.user.username %}">{{ m.user.username }}</a>
+          {% if m.is_moderator %}<span class="muted">&middot; moderator</span>{% endif %}
+          {% if m.user_id == user.id %}
+            <span class="muted">(you)</span>
+          {% else %}
+            <form class="inline" method="post" action="{% url 'remove_community_member' community.slug m.user_id %}">
+              {% csrf_token %}
+              <button type="submit" class="linkbtn">remove</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

@@ -62,11 +62,6 @@ class Submission(models.Model):
         return "link" if self.url else "text"
 
     @property
-    def community_scopes(self):
-        # Relies on prefetched scopes + select_related("community"); no extra queries.
-        return [s for s in self.scopes.all() if s.community_id]
-
-    @property
     def domain(self):
         if not self.url:
             return ""

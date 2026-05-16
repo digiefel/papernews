@@ -7,8 +7,90 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 
 from .citations import normalize_doi
-from .models import Comment, Submission, SubmissionScope
+from .models import Comment, Community, Submission, SubmissionScope
 from .visibility import writable_communities_for
+
+
+COLOR_INPUT_ATTRS = {"type": "color"}
+DESCRIPTION_WIDGET = forms.Textarea(attrs={"rows": 3})
+
+
+def _user_is_admin(user):
+    return bool(user and user.is_authenticated and user.is_staff)
+
+
+class CommunityCreateForm(forms.ModelForm):
+    class Meta:
+        model = Community
+        fields = ("slug", "name", "description", "color", "is_private")
+        widgets = {
+            "description": DESCRIPTION_WIDGET,
+            "color": forms.TextInput(attrs=COLOR_INPUT_ATTRS),
+        }
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        # Only global admins can create public communities. For everyone else
+        # we drop the is_private field entirely and force-private on save.
+        if not _user_is_admin(user):
+            del self.fields["is_private"]
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if "is_private" not in self.fields:
+            instance.is_private = True
+        if commit:
+            instance.save()
+        return instance
+
+
+class AddMemberForm(forms.Form):
+    username = forms.CharField(max_length=150, label="Username")
+    is_moderator = forms.BooleanField(required=False, label="as moderator")
+
+    def __init__(self, *args, community=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.community = community
+
+    def clean_username(self):
+        from django.contrib.auth import get_user_model
+        from .models import CommunityMembership
+
+        User = get_user_model()
+        username = self.cleaned_data["username"].strip()
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            raise forms.ValidationError(f"No user named '{username}'.")
+        if self.community and CommunityMembership.objects.filter(
+            community=self.community, user=user
+        ).exists():
+            raise forms.ValidationError(
+                f"{username} is already a member of this community."
+            )
+        # Stash the resolved user so the view doesn't need to look it up again.
+        self.cleaned_data["user"] = user
+        return username
+
+
+class CommunityEditForm(forms.ModelForm):
+    # Slug is omitted: it's in URLs and shouldn't change after creation.
+    class Meta:
+        model = Community
+        fields = ("name", "description", "color", "is_private")
+        widgets = {
+            "description": DESCRIPTION_WIDGET,
+            "color": forms.TextInput(attrs=COLOR_INPUT_ATTRS),
+        }
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        # Closing the loophole: a non-admin moderator can't flip privacy
+        # either, otherwise the create rule would be bypassable.
+        if not _user_is_admin(user):
+            del self.fields["is_private"]
 
 
 class SignupForm(UserCreationForm):

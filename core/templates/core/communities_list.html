@@ -5,6 +5,7 @@
 {% block content %}
   <h1>Communities</h1>
   <ul class="communities">
+  {% if user.is_authenticated %}<li><a class="create-link" href="{% url 'create_community' %}">create new</a></li>{% endif %}
     {% for community in communities %}
       <li>
         {% include "core/_community_link.html" %}
@@ -14,7 +15,7 @@
         {% endif %}
       </li>
     {% empty %}
-      <li class="muted">No communities yet.</li>
+      <a class="muted">No communities yet.</li>
     {% endfor %}
   </ul>
 {% endblock %}

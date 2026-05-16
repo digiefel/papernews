@@ -1,0 +1,43 @@
+{% extends "core/base.html" %}
+
+{% block title %}Create community &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>Create community</h1>
+  <p class="muted">You'll be the first moderator.</p>
+
+  <form class="stacked" method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <p>
+      <label for="{{ form.slug.id_for_label }}">Slug</label>
+      {{ form.slug }}
+      <span class="muted">Used in URLs like c/your-community. Can't be changed later.</span>
+      {{ form.slug.errors }}
+    </p>
+    <p>
+      <label for="{{ form.name.id_for_label }}">Name</label>
+      {{ form.name }}
+      {{ form.name.errors }}
+    </p>
+    <p>
+      <label for="{{ form.description.id_for_label }}">Description</label>
+      {{ form.description }}
+      {{ form.description.errors }}
+    </p>
+    <p>
+      <label for="{{ form.color.id_for_label }}">Accent color</label>
+      {{ form.color }}
+      {{ form.color.errors }}
+    </p>
+    {% if form.is_private %}
+      <p>
+        <label>{{ form.is_private }} private (members only)</label>
+        {{ form.is_private.errors }}
+      </p>
+    {% else %}
+      <p class="muted">Your community will be invite-only. Contact us to create a new one.</p>
+    {% endif %}
+    <button type="submit">create</button>
+  </form>
+{% endblock %}

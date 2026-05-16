@@ -246,10 +246,10 @@ class UserPageTests(TestCase):
         self.other = User.objects.create_user("bob", password="pw-test-12345")
 
     def test_user_page_interleaves_and_orders(self):
-        s1 = Submission.objects.create(title="first", body="x", author=self.user)
-        host = Submission.objects.create(title="host", body="x", author=self.other)
-        c1 = Comment.objects.create(submission=host, author=self.user, body="c1")
-        s2 = Submission.objects.create(title="second", body="y", author=self.user)
+        s1 = make_submission(title="first", body="x", author=self.user)
+        host = make_submission(title="host", body="x", author=self.other)
+        c1 = make_comment(host, author=self.user, body="c1")
+        s2 = make_submission(title="second", body="y", author=self.user)
 
         resp = self.client.get(f"/u/{self.user.username}/")
         items = list(resp.context["page_obj"])
@@ -259,22 +259,101 @@ class UserPageTests(TestCase):
         )
 
     def test_user_page_excludes_removed(self):
-        Submission.objects.create(
+        make_submission(
             title="hidden", body="x", author=self.user, is_removed=True
         )
-        host_ok = Submission.objects.create(title="ok host", body="x", author=self.other)
-        host_gone = Submission.objects.create(
+        host_ok = make_submission(title="ok host", body="x", author=self.other)
+        host_gone = make_submission(
             title="gone host", body="x", author=self.other, is_removed=True
         )
-        Comment.objects.create(
-            submission=host_ok, author=self.user, body="removed", is_removed=True
+        make_comment(
+            host_ok, author=self.user, body="removed", is_removed=True
         )
-        Comment.objects.create(
-            submission=host_gone, author=self.user, body="orphan"
-        )
+        make_comment(host_gone, author=self.user, body="orphan")
 
         resp = self.client.get(f"/u/{self.user.username}/")
         self.assertEqual(len(resp.context["page_obj"]), 0)
+
+    def test_user_page_hides_private_only_submission_from_outsider(self):
+        private = Community.objects.create(
+            slug="lab", name="Lab", is_private=True
+        )
+        CommunityMembership.objects.create(community=private, user=self.user)
+        make_submission(
+            title="secret-paper",
+            body="x",
+            author=self.user,
+            global_=False,
+            communities=[private],
+        )
+        resp = self.client.get(f"/u/{self.user.username}/")
+        self.assertNotContains(resp, "secret-paper")
+
+    def test_user_page_shows_private_submission_to_member(self):
+        private = Community.objects.create(
+            slug="lab", name="Lab", is_private=True
+        )
+        CommunityMembership.objects.create(community=private, user=self.user)
+        CommunityMembership.objects.create(community=private, user=self.other)
+        make_submission(
+            title="secret-paper",
+            body="x",
+            author=self.user,
+            global_=False,
+            communities=[private],
+        )
+        self.client.force_login(self.other)
+        resp = self.client.get(f"/u/{self.user.username}/")
+        self.assertContains(resp, "secret-paper")
+
+    def test_user_page_hides_private_only_comment_from_outsider(self):
+        private = Community.objects.create(
+            slug="lab", name="Lab", is_private=True
+        )
+        CommunityMembership.objects.create(community=private, user=self.user)
+        host = make_submission(title="host", body="x", author=self.other)
+        make_comment(
+            host,
+            author=self.user,
+            body="lab-only-comment",
+            global_=False,
+            communities=[private],
+        )
+        resp = self.client.get(f"/u/{self.user.username}/")
+        self.assertNotContains(resp, "lab-only-comment")
+
+    def test_home_feed_hides_private_community_label_from_outsider(self):
+        # A submission posted globally AND to a private community should not
+        # leak the private community's slug to outsiders viewing the home feed.
+        private = Community.objects.create(
+            slug="secret-lab", name="Secret Lab", is_private=True
+        )
+        CommunityMembership.objects.create(community=private, user=self.user)
+        make_submission(
+            title="cross-posted",
+            body="x",
+            author=self.user,
+            communities=[private],
+        )
+        resp = self.client.get("/")
+        self.assertContains(resp, "cross-posted")
+        self.assertNotContains(resp, "secret-lab")
+
+    def test_home_feed_shows_private_community_label_to_member(self):
+        private = Community.objects.create(
+            slug="secret-lab", name="Secret Lab", is_private=True
+        )
+        CommunityMembership.objects.create(community=private, user=self.user)
+        CommunityMembership.objects.create(community=private, user=self.other)
+        make_submission(
+            title="cross-posted",
+            body="x",
+            author=self.user,
+            communities=[private],
+        )
+        self.client.force_login(self.other)
+        resp = self.client.get("/")
+        self.assertContains(resp, "secret-lab")
 
 
 class VisibilityTests(TestCase):
@@ -615,6 +694,48 @@ class VisibilityTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login/", resp["Location"])
 
+    def test_leave_get_renders_confirm_page(self):
+        CommunityMembership.objects.create(
+            community=self.private_community, user=self.outsider
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.get(f"/c/{self.private_community.slug}/leave/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, f"Leave")
+        self.assertContains(resp, "private community")
+        # The actual leave hasn't happened yet — membership still present.
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.private_community, user=self.outsider
+            ).exists()
+        )
+
+    def test_leave_get_for_last_mod_shows_block_message(self):
+        # mod role on the public community for variety; same logic applies.
+        only_mod = User.objects.create_user("solo", password="pw-test-12345")
+        CommunityMembership.objects.create(
+            community=self.public_community, user=only_mod, is_moderator=True
+        )
+        self.client.force_login(only_mod)
+        resp = self.client.get(f"/c/{self.public_community.slug}/leave/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "only moderator")
+
+    def test_leave_link_on_private_community_page(self):
+        CommunityMembership.objects.create(
+            community=self.private_community, user=self.outsider
+        )
+        self.client.force_login(self.outsider)
+        resp = self.client.get(f"/c/{self.private_community.slug}/")
+        # The "joined" indicator is a link to the confirm page, not a form
+        # POST — that's what makes the confirm step work without JS.
+        self.assertContains(
+            resp, f'href="/c/{self.private_community.slug}/leave/"'
+        )
+        self.assertNotContains(
+            resp, f'action="/c/{self.private_community.slug}/leave/"'
+        )
+
     def test_leave_public_deletes_membership(self):
         CommunityMembership.objects.create(
             community=self.public_community, user=self.outsider
@@ -650,6 +771,315 @@ class VisibilityTests(TestCase):
         self.client.force_login(self.outsider)
         resp = self.client.get(f"/c/{self.public_community.slug}/")
         self.assertContains(resp, f'action="/c/{self.public_community.slug}/leave/"')
+
+
+class CommunityCreationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("creator", password="pw-test-12345")
+
+    def test_create_requires_login(self):
+        resp = self.client.get("/communities/new/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
+
+    def test_create_community_makes_creator_moderator(self):
+        # Public communities require staff; mark the creator so we can verify
+        # the full create flow including is_private toggling.
+        self.user.is_staff = True
+        self.user.save()
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/communities/new/",
+            {
+                "slug": "new-stuff",
+                "name": "New Stuff",
+                "description": "what we do",
+                "color": "#112233",
+                "is_private": "",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        community = Community.objects.get(slug="new-stuff")
+        self.assertEqual(community.name, "New Stuff")
+        self.assertEqual(community.color, "#112233")
+        self.assertFalse(community.is_private)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=community, user=self.user, is_moderator=True
+            ).exists()
+        )
+
+    def test_non_admin_create_is_forced_private(self):
+        self.client.force_login(self.user)  # not staff
+        resp = self.client.post(
+            "/communities/new/",
+            {
+                "slug": "lab-x",
+                "name": "Lab X",
+                "description": "",
+                "color": "#ff6600",
+                # Even if the user tries to send is_private=off, the field
+                # isn't on the form and the save path forces True.
+                "is_private": "",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        community = Community.objects.get(slug="lab-x")
+        self.assertTrue(community.is_private)
+
+    def test_non_admin_does_not_see_privacy_toggle(self):
+        self.client.force_login(self.user)
+        resp = self.client.get("/communities/new/")
+        self.assertNotContains(resp, 'name="is_private"')
+
+    def test_create_rejects_duplicate_slug(self):
+        Community.objects.create(slug="taken", name="T")
+        self.client.force_login(self.user)
+        resp = self.client.post(
+            "/communities/new/",
+            {
+                "slug": "taken",
+                "name": "Mine",
+                "description": "",
+                "color": "#ff6600",
+                "is_private": "",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(Community.objects.filter(slug="taken").count(), 1)
+
+
+class CommunityModerationTests(TestCase):
+    def setUp(self):
+        self.mod = User.objects.create_user("mod", password="pw-test-12345")
+        self.other_mod = User.objects.create_user("comod", password="pw-test-12345")
+        self.member = User.objects.create_user("member", password="pw-test-12345")
+        self.outsider = User.objects.create_user("nope", password="pw-test-12345")
+        self.community = Community.objects.create(slug="lab", name="Lab")
+        CommunityMembership.objects.create(
+            community=self.community, user=self.mod, is_moderator=True
+        )
+        CommunityMembership.objects.create(
+            community=self.community, user=self.member
+        )
+
+    def test_manage_page_404_for_non_moderator(self):
+        self.client.force_login(self.member)
+        resp = self.client.get(f"/c/{self.community.slug}/manage/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_manage_page_404_for_anon(self):
+        resp = self.client.get(f"/c/{self.community.slug}/manage/")
+        self.assertEqual(resp.status_code, 302)  # login redirect
+
+    def test_moderator_can_edit_settings(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/manage/",
+            {
+                "name": "Lab (renamed)",
+                "description": "now with more rigor",
+                "color": "#abcdef",
+                # Non-admin mod can't toggle privacy — field is dropped from
+                # the form, so the original value is preserved.
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.community.refresh_from_db()
+        self.assertEqual(self.community.name, "Lab (renamed)")
+        self.assertEqual(self.community.color, "#abcdef")
+        self.assertFalse(self.community.is_private)
+        # Slug is intentionally not editable through this form.
+        self.assertEqual(self.community.slug, "lab")
+
+    def test_non_admin_mod_cannot_flip_privacy(self):
+        # mod is not staff; sending is_private=on should be ignored.
+        self.client.force_login(self.mod)
+        self.client.post(
+            f"/c/{self.community.slug}/manage/",
+            {
+                "name": "Lab",
+                "description": "",
+                "color": "#ff6600",
+                "is_private": "on",
+            },
+        )
+        self.community.refresh_from_db()
+        self.assertFalse(self.community.is_private)
+
+    def test_admin_mod_can_flip_privacy(self):
+        self.mod.is_staff = True
+        self.mod.save()
+        self.client.force_login(self.mod)
+        self.client.post(
+            f"/c/{self.community.slug}/manage/",
+            {
+                "name": "Lab",
+                "description": "",
+                "color": "#ff6600",
+                "is_private": "on",
+            },
+        )
+        self.community.refresh_from_db()
+        self.assertTrue(self.community.is_private)
+
+    def test_moderator_can_remove_regular_member(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.member.id}/remove/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.member
+            ).exists()
+        )
+
+    def test_cannot_remove_last_moderator(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.mod.id}/remove/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.mod
+            ).exists()
+        )
+
+    def test_can_remove_mod_when_another_mod_exists(self):
+        CommunityMembership.objects.create(
+            community=self.community, user=self.other_mod, is_moderator=True
+        )
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.other_mod.id}/remove/"
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.other_mod
+            ).exists()
+        )
+
+    def test_last_moderator_cannot_leave(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(f"/c/{self.community.slug}/leave/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.mod
+            ).exists()
+        )
+
+    def test_manage_link_visible_only_to_mod(self):
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/")
+        self.assertContains(resp, f'href="/c/{self.community.slug}/manage/"')
+        self.client.force_login(self.member)
+        resp = self.client.get(f"/c/{self.community.slug}/")
+        self.assertNotContains(resp, f'href="/c/{self.community.slug}/manage/"')
+
+    def test_non_moderator_cannot_remove_member(self):
+        self.client.force_login(self.member)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/{self.mod.id}/remove/"
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertTrue(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.mod
+            ).exists()
+        )
+
+    def test_manage_page_marks_current_user_and_hides_self_remove(self):
+        self.client.force_login(self.mod)
+        resp = self.client.get(f"/c/{self.community.slug}/manage/")
+        self.assertContains(resp, "(you)")
+        # No remove form action targeting the current user.
+        self.assertNotContains(
+            resp,
+            f'action="/c/{self.community.slug}/members/{self.mod.id}/remove/"',
+        )
+        # But the other (regular) member still gets a remove form.
+        self.assertContains(
+            resp,
+            f'action="/c/{self.community.slug}/members/{self.member.id}/remove/"',
+        )
+
+    def test_moderator_can_add_member(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": self.outsider.username},
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.outsider
+        )
+        self.assertFalse(membership.is_moderator)
+
+    def test_moderator_can_add_member_as_moderator(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": self.outsider.username, "is_moderator": "on"},
+        )
+        self.assertEqual(resp.status_code, 302)
+        membership = CommunityMembership.objects.get(
+            community=self.community, user=self.outsider
+        )
+        self.assertTrue(membership.is_moderator)
+
+    def test_add_unknown_user_shows_error(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": "ghost"},
+            follow=True,
+        )
+        self.assertContains(resp, "No user named")
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.community, user__username="ghost"
+            ).exists()
+        )
+
+    def test_add_existing_member_shows_error(self):
+        self.client.force_login(self.mod)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": self.member.username},
+            follow=True,
+        )
+        self.assertContains(resp, "already a member")
+        self.assertEqual(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.member
+            ).count(),
+            1,
+        )
+
+    def test_non_moderator_cannot_add_member(self):
+        self.client.force_login(self.member)
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": self.outsider.username},
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertFalse(
+            CommunityMembership.objects.filter(
+                community=self.community, user=self.outsider
+            ).exists()
+        )
+
+    def test_add_member_requires_login(self):
+        resp = self.client.post(
+            f"/c/{self.community.slug}/members/add/",
+            {"username": self.outsider.username},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/login/", resp["Location"])
 
 
 SAMPLE_BIBTEX = """@article{shannon1948,
