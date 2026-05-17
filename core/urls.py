@@ -16,7 +16,29 @@ urlpatterns = [
     path("u/<str:username>/", views.user_page, name="user_page"),
     path("signup/", views.signup, name="signup"),
     path("communities/", views.communities_index, name="communities"),
+    path("communities/new/", views.create_community, name="create_community"),
     path("c/<slug:slug>/", views.community_detail, name="community_detail"),
     path("c/<slug:slug>/join/", views.join_community, name="join_community"),
     path("c/<slug:slug>/leave/", views.leave_community, name="leave_community"),
+    path("c/<slug:slug>/manage/", views.community_manage, name="community_manage"),
+    path(
+        "c/<slug:slug>/members/add/",
+        views.add_community_member,
+        name="add_community_member",
+    ),
+    path(
+        "c/<slug:slug>/members/<int:user_id>/remove/",
+        views.remove_community_member,
+        name="remove_community_member",
+    ),
+    path(
+        "c/<slug:slug>/members/<int:user_id>/toggle-mod/",
+        views.toggle_community_moderator,
+        name="toggle_community_moderator",
+    ),
+    path(
+        "c/<slug:slug>/step-down/",
+        views.step_down_confirm,
+        name="step_down_confirm",
+    ),
 ]

@@ -1,0 +1,55 @@
+{% extends "core/base.html" %}
+
+{% block title %}Manage c/{{ community.slug }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <header class="community-header">
+    <div class="community-header-main">
+      <h1>Manage {% include "core/_community_link.html" %}</h1>
+    </div>
+  </header>
+
+  <section class="manage-section" id="settings">
+    <h2>Settings</h2>
+    <form class="stacked" method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {% include "core/_community_settings_fields.html" with privacy_locked_text="Privacy is locked. Only site admins can change it." %}
+      <button type="submit">save</button>
+    </form>
+  </section>
+
+  <section class="manage-section" id="members">
+    <h2>Members</h2>
+    <form class="add-member" method="post" action="{% url 'add_community_member' community.slug %}">
+      {% csrf_token %}
+      <input type="text" name="username" placeholder="username" autocomplete="off" required>
+      <label><input type="checkbox" name="is_moderator"> as moderator</label>
+      <button type="submit">add</button>
+    </form>
+    <ul class="member-list">
+      {% for m in members %}
+        <li>
+          <a href="{% url 'user_page' m.user.username %}">{{ m.user.username }}</a>
+          {% if m.is_moderator %}<span class="muted">&middot; moderator</span>{% endif %}
+          {% if m.user_id == user.id %}
+            {% if m.is_moderator %}
+              {# Two-step confirm so it works without JS. #}
+              <a href="{% url 'step_down_confirm' community.slug %}">step down</a>
+            {% endif %}
+            <span class="muted">(you)</span>
+          {% else %}
+            <form class="inline" method="post" action="{% url 'toggle_community_moderator' community.slug m.user_id %}">
+              {% csrf_token %}
+              <button type="submit" class="linkbtn">{% if m.is_moderator %}demote{% else %}make moderator{% endif %}</button>
+            </form>
+            <form class="inline" method="post" action="{% url 'remove_community_member' community.slug m.user_id %}">
+              {% csrf_token %}
+              <button type="submit" class="linkbtn">remove</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

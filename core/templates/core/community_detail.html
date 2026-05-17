@@ -13,11 +13,19 @@
     </div>
     <div class="community-header-actions">
       {% if user.is_authenticated %}
+        {% if is_moderator %}
+          <a href="{% url 'community_manage' community.slug %}">manage</a>
+        {% endif %}
         {% if is_member %}
-          <form method="post" action="{% url 'leave_community' community.slug %}">
-            {% csrf_token %}
-            <button type="submit" class="linkbtn">joined</button>
-          </form>
+          {% if community.is_private %}
+            {# Private leave is a two-step confirm so it works no-JS. #}
+            <a href="{% url 'leave_community' community.slug %}">joined</a>
+          {% else %}
+            <form method="post" action="{% url 'leave_community' community.slug %}">
+              {% csrf_token %}
+              <button type="submit" class="linkbtn">joined</button>
+            </form>
+          {% endif %}
         {% elif not community.is_private %}
           <form method="post" action="{% url 'join_community' community.slug %}">
             {% csrf_token %}

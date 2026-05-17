@@ -1,0 +1,19 @@
+{% extends "core/base.html" %}
+
+{% block title %}{{ page_title }} &middot; Papernews{% endblock %}
+
+{% block content %}
+  <h1>{{ heading_prefix }} {% include "core/_community_link.html" %}?</h1>
+
+  {% if is_blocked %}
+    <p>{{ block_text }}</p>
+    <p><a href="{{ cancel_url }}">back to c/{{ community.slug }}</a></p>
+  {% else %}
+    <p class="muted">{{ body_text }}</p>
+    <form method="post" action="{{ action_url }}" class="action-confirm">
+      {% csrf_token %}
+      <button type="submit">{{ action_label }}</button>
+      <a href="{{ cancel_url }}">cancel</a>
+    </form>
+  {% endif %}
+{% endblock %}

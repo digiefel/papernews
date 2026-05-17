@@ -22,8 +22,8 @@
       <div class="subtext muted">
         by <span class="username">{{ submission.author.username }}</span>{% if submission.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
         {{ submission.created|timesince }} ago
-        {% if submission.community_scopes %}
-          | in {% for scope in submission.community_scopes %}{% include "core/_community_link.html" with community=scope.community %}{% if not forloop.last %}, {% endif %}{% endfor %}
+        {% if submission.visible_community_scopes %}
+          | in {% for scope in submission.visible_community_scopes %}{% include "core/_community_link.html" with community=scope.community %}{% if not forloop.last %}, {% endif %}{% endfor %}
         {% endif %}
       </div>
       {% include "core/_submission_meta.html" %}
