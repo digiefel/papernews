@@ -1,7 +1,12 @@
 {% extends "core/base.html" %}
-{% load markup %}
+{% load static %}
 
 {% block title %}Reply &middot; Papernews{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'temml.min.js' %}" defer></script>
+  <script src="{% static 'math-compose.js' %}" defer></script>
+{% endblock %}
 
 {% block content %}
   {% include "core/_comment.html" with comment=parent hide_reply=True show_on_link=True %}
@@ -9,16 +14,24 @@
   <form class="comment-form" method="post">
     {% csrf_token %}
     {{ form.non_field_errors }}
-    <p class="reply-scope muted">
+    <fieldset class="reply-scope text-editor muted">
       {% if parent.scope_community %}
         Reply in {% include "core/_community_link.html" with community=parent.scope_community %}
       {% else %}
         Reply globally
       {% endif %}
       <input type="hidden" name="scope" value="{{ parent.scope_value }}">
-    </p>
-    {{ form.body }}
-    {{ form.body.errors }}
+      <input type="checkbox" id="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle-state" disabled>
+      <label for="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle linkbtn js-only">
+        <span class="when-off">preview</span>
+        <span class="when-on">edit</span>
+      </label>
+      {{ form.body }}
+      <span class="editor-preview js-only" aria-live="polite"></span>
+      {{ form.body_html }}
+      <noscript><span class="muted">Math composition needs JavaScript; without it, LaTeX syntax won't be compiled.</span></noscript>
+      {{ form.body.errors }}
+    </fieldset>
     <button type="submit">reply</button>
   </form>
 

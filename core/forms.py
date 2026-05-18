@@ -14,7 +14,21 @@ from .models import (
     Submission,
     SubmissionScope,
 )
+from .sanitize import COMMENT_BODY
+from .text import fallback_body_html
 from .visibility import writable_communities_for
+
+
+def _resolve_body_html(cleaned_body: str, raw_body_html: str | None) -> str:
+    """Compute the stored ``body_html`` for a comment- or submission-shaped form.
+
+    Centralised so both forms share the policy: trust nothing from the client,
+    sanitize what they send, and fall back to a text-only render when the
+    client didn't supply HTML at all (typically: JavaScript disabled).
+    """
+    if raw_body_html:
+        return COMMENT_BODY.clean(raw_body_html)
+    return fallback_body_html(cleaned_body or "")
 
 
 COLOR_INPUT_ATTRS = {"type": "color"}
@@ -124,6 +138,11 @@ class SubmissionForm(forms.ModelForm):
         widget=forms.CheckboxSelectMultiple,
         label="Also post to",
     )
+    # Rendered HTML for `body`, populated client-side by static/math-compose.js
+    # right before submit. Treated as untrusted: sanitized via COMMENT_BODY
+    # before storage. If absent (JS disabled), we render a text-only fallback
+    # server-side in clean().
+    body_html = forms.CharField(required=False, widget=forms.HiddenInput)
     bibtex_text = forms.CharField(
         required=False,
         widget=forms.Textarea(
@@ -146,12 +165,18 @@ class SubmissionForm(forms.ModelForm):
         model = Submission
         fields = ("title", "url", "body", "year", "source")
         widgets = {
-            "body": forms.Textarea(attrs={"rows": 8}),
+            "body": forms.Textarea(
+                attrs={
+                    "rows": 8, "data-math-compose": "body_html",
+                    "placeholder": "Leave the URL blank and type something here for a text post."
+                }
+            ),
             "year": forms.NumberInput(attrs={"placeholder": "2023"}),
             "source": forms.TextInput(attrs={"placeholder": "journal, conference, …"}),
         }
         help_texts = {
-            "body": "Leave the URL blank for a text post.",
+            # "body": "Leave the URL blank for a text post.",
+            "body": "",
         }
 
     def __init__(self, *args, user=None, **kwargs):
@@ -199,6 +224,9 @@ class SubmissionForm(forms.ModelForm):
         # changed → DOI updated" path consistent without the view caring.
         super()._post_clean()
         self.instance.doi = normalize_doi(self.instance.url) or ""
+        self.instance.body_html = _resolve_body_html(
+            self.instance.body, self.cleaned_data.get("body_html")
+        )
 
     def split_authors(self):
         """Return ordered, deduped list of non-empty author names from authors_text."""
@@ -237,11 +265,23 @@ class CommentForm(forms.ModelForm):
         choices=(),
         label="Reply in",
     )
+    # See SubmissionForm.body_html for the contract.
+    body_html = forms.CharField(required=False, widget=forms.HiddenInput)
 
     class Meta:
         model = Comment
         fields = ("body",)
-        widgets = {"body": forms.Textarea(attrs={"rows": 4})}
+        widgets = {
+            "body": forms.Textarea(
+                attrs={"rows": 4, "data-math-compose": "body_html"}
+            ),
+        }
+
+    def _post_clean(self):
+        super()._post_clean()
+        self.instance.body_html = _resolve_body_html(
+            self.instance.body, self.cleaned_data.get("body_html")
+        )
 
     def __init__(
         self,

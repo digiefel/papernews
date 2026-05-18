@@ -1,7 +1,12 @@
 {% extends "core/base.html" %}
-{% load markup %}
+{% load static %}
 
 {% block title %}{{ submission.title }} &middot; Papernews{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'temml.min.js' %}" defer></script>
+  <script src="{% static 'math-compose.js' %}" defer></script>
+{% endblock %}
 
 {% block content %}
   <article class="row">
@@ -31,14 +36,14 @@
   </article>
 
   {% if submission.body %}
-    <div class="post-body">{{ submission.body|render_text }}</div>
+    <div class="post-body">{{ submission.body_html|safe }}</div>
   {% endif %}
 
   {% if user.is_authenticated %}
     <form class="comment-form" method="post" action="{{ submission.get_absolute_url }}">
       {% csrf_token %}
       {{ form.non_field_errors }}
-      <fieldset class="reply-scope">
+      <fieldset class="reply-scope text-editor">
         <legend class="muted">Reply in</legend>
         {% for opt in form.scope_options %}
           <label>
@@ -47,9 +52,17 @@
           </label>
         {% endfor %}
         {{ form.scope.errors }}
+        <input type="checkbox" id="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle-state" disabled>
+        <label for="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle linkbtn js-only">
+          <span class="when-off">preview</span>
+          <span class="when-on">edit</span>
+        </label>
+        {{ form.body }}
+        <span class="editor-preview js-only" aria-live="polite"></span>
+        {{ form.body_html }}
+        <noscript><span class="muted">Math composition needs JavaScript; without it, <code>$…$</code> stays as plain text.</span></noscript>
+        {{ form.body.errors }}
       </fieldset>
-      {{ form.body }}
-      {{ form.body.errors }}
       <button type="submit">add comment</button>
     </form>
   {% else %}

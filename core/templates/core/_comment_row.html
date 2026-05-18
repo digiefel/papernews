@@ -1,4 +1,3 @@
-{% load markup %}
 <div class="comment">
   <div class="subtext muted">
     {{ comment.author.username }}{% if comment.author.profile.verified %} <span class="verified" title="verified">&#10003;</span>{% endif %}
@@ -6,5 +5,5 @@
     &middot; {{ comment.vote_count }} point{{ comment.vote_count|pluralize }}
     &middot; on <a href="{{ comment.get_absolute_url }}">{{ comment.submission.title }}</a>
   </div>
-  <div class="comment-body">{{ comment.body|render_text }}</div>
+  <div class="comment-body">{{ comment.body_html|safe }}</div>
 </div>

@@ -1,4 +1,3 @@
-{% load markup %}
 <article class="row">
   <form class="vote" method="post" action="{% url 'vote_submission' submission.pk %}">
     {% csrf_token %}

@@ -533,3 +533,77 @@ ul.community-checkboxes label {
   background: #ffffe0;
   border: 1px solid #e0e0a0;
 }
+
+.text-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  max-width: 480px;
+}
+
+.text-editor > .editor-mode-toggle {
+  margin-left: auto;
+  font-size: 0.85em;
+}
+
+.text-editor > textarea {
+  flex: 0 0 100%;
+  /* resize: none; */
+}
+
+.text-editor > .editor-preview,
+.text-editor > .errorlist,
+.text-editor > noscript {
+  flex: 0 0 100%;
+}
+
+/* The toggle is a <label>; .js-only's default display:block would break
+   the inline flex row, so re-assert inline when JS is on. */
+.js .editor-mode-toggle.js-only { display: inline; }
+
+/* Visually-hidden state checkbox: still focusable, doesn't take layout. */
+.editor-mode-toggle-state {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Toggle label text swap (always safe to apply — no-JS users can't
+   check the disabled checkbox, so the "off" label always shows for them). */
+.editor-mode-toggle .when-on { display: none; }
+.editor-mode-toggle-state:checked ~ .editor-mode-toggle .when-on { display: inline; }
+.editor-mode-toggle-state:checked ~ .editor-mode-toggle .when-off { display: none; }
+
+/* Show preview / hide textarea when toggled on. Scoped under .js so a
+   pre-JS keystroke (unlikely with disabled, but cheap insurance) can't
+   leave the page in a hidden-textarea state. */
+.js .editor-mode-toggle-state:checked ~ textarea { display: none; }
+.js .editor-mode-toggle-state:not(:checked) ~ .editor-preview { display: none; }
+
+.editor-preview {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 3em;
+  padding: 0.12rem;
+  border: 1px dashed #ccc;
+  background: #fcfcfa;
+}
+
+.editor-preview:empty::before {
+  content: "(empty)";
+  color: #ccc;
+}
+
+.math-error {
+  background: #fdecea;
+  border: 1px solid #f5c2c0;
+  color: #b00020;
+  padding: 0 0.25em;
+  border-radius: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
