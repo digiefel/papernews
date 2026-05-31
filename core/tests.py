@@ -1450,3 +1450,249 @@ class ApiExtractMetadataTests(TestCase):
         resp = self.client.post(self.URL, {"file": upload})
         self.assertEqual(resp.status_code, 413)
 
+
+
+# ---------------------------------------------------------------------------
+# Math rendering: sanitize profiles, body splitter, form integration.
+# ---------------------------------------------------------------------------
+
+
+from .sanitize import COMMENT_BODY, INLINE_TEXT, MATHML
+from .sanitize import Profile as SanitizeProfile  # avoid clashing with models.Profile
+from .text import fallback_body_html, split_body
+
+
+class SanitizeProfileTests(TestCase):
+    def test_union_tags_and_attributes(self):
+        merged = INLINE_TEXT | MATHML
+        self.assertEqual(merged.tags, INLINE_TEXT.tags | MATHML.tags)
+        # Per-tag attributes union for tags present in both (none overlap
+        # today, but the contract should hold).
+        a_extra = SanitizeProfile(
+            tags=frozenset({"a"}),
+            attributes={"a": frozenset({"title"})},
+        )
+        m = INLINE_TEXT | a_extra
+        self.assertEqual(m.attributes["a"], frozenset({"href", "title"}))
+
+    def test_union_idempotent(self):
+        self.assertEqual((INLINE_TEXT | INLINE_TEXT).tags, INLINE_TEXT.tags)
+
+    def test_comment_body_preserves_temml_output(self):
+        # Representative MathML chunks Temml emits — we don't shell out to
+        # Temml here; we just feed in canonical output for known formulas
+        # and assert the sanitizer leaves it intact.
+        samples = [
+            '<math xmlns="http://www.w3.org/1998/Math/MathML">'
+            "<mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>",
+            '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">'
+            "<mfrac><mi>a</mi><mi>b</mi></mfrac></math>",
+            '<math xmlns="http://www.w3.org/1998/Math/MathML">'
+            "<mtable><mtr><mtd><mi>x</mi></mtd></mtr></mtable></math>",
+        ]
+        for s in samples:
+            with self.subTest(sample=s):
+                out = COMMENT_BODY.clean(s)
+                self.assertIn("<math", out)
+                # Round-trip: nothing of substance should be dropped.
+                self.assertIn("xmlns=", out)
+
+    def test_comment_body_strips_dangerous_html(self):
+        bad = (
+            '<script>alert(1)</script>'
+            '<math><mi onclick="x" mathvariant="bold">y</mi></math>'
+            '<iframe src="javascript:alert(1)"></iframe>'
+            "<p>not allowed here</p>"
+        )
+        out = COMMENT_BODY.clean(bad)
+        self.assertNotIn("<script", out)
+        self.assertNotIn("onclick", out)
+        self.assertNotIn("<iframe", out)
+        self.assertNotIn("<p>", out)
+        # Allowed attribute survives:
+        self.assertIn("mathvariant", out)
+
+    def test_javascript_href_neutralised(self):
+        out = COMMENT_BODY.clean(
+            '<a href="javascript:alert(1)">click</a>'
+            '<a href="https://example.com">ok</a>'
+        )
+        self.assertNotIn("javascript", out)
+        self.assertIn("example.com", out)
+        # link_rel applied:
+        self.assertIn("rel=", out)
+
+    def test_mathml_block_alone_excludes_text_tags(self):
+        # The MATHML profile by itself must not let through <br> or <a>.
+        out = MATHML.clean('<br><a href="https://x.com">x</a><math><mi>a</mi></math>')
+        self.assertIn("<math", out)
+        self.assertNotIn("<br", out)
+        self.assertNotIn("<a ", out)
+
+
+class SplitBodyTests(TestCase):
+    def test_plain_text(self):
+        self.assertEqual(split_body("hello"), [("text", "hello")])
+
+    def test_inline_math(self):
+        self.assertEqual(
+            split_body("a $x^2$ b"),
+            [("text", "a "), ("inline_math", "x^2"), ("text", " b")],
+        )
+
+    def test_display_math_spans_newlines(self):
+        self.assertEqual(
+            split_body("pre $$\nfoo\n$$ post"),
+            [("text", "pre "), ("display_math", "\nfoo\n"), ("text", " post")],
+        )
+
+    def test_escaped_dollar_is_not_math(self):
+        self.assertEqual(
+            split_body("price is \\$5 only"),
+            [("text", "price is \\$5 only")],
+        )
+
+    def test_unmatched_delimiter_treated_as_text(self):
+        # Single $ with no closing partner — the whole thing remains text.
+        self.assertEqual(split_body("only $ one"), [("text", "only $ one")])
+
+    def test_inline_does_not_cross_newline(self):
+        # `$a\nb$` should NOT be a single inline math segment.
+        self.assertEqual(split_body("$a\nb$"), [("text", "$a\nb$")])
+
+    def test_display_takes_precedence_over_inline(self):
+        # The longer pattern matches first.
+        out = split_body("x $$ab$$ y")
+        self.assertEqual(
+            out, [("text", "x "), ("display_math", "ab"), ("text", " y")]
+        )
+
+
+class FallbackBodyHtmlTests(TestCase):
+    def test_empty(self):
+        self.assertEqual(fallback_body_html(""), "")
+
+    def test_autolinks_url(self):
+        out = fallback_body_html("see https://example.com here")
+        self.assertIn('href="https://example.com"', out)
+        self.assertIn("nofollow", out)
+
+    def test_newline_becomes_br(self):
+        self.assertEqual(fallback_body_html("a\nb"), "a<br>b")
+
+    def test_does_not_render_math(self):
+        # The fallback intentionally leaves math delimiters as literal text.
+        self.assertEqual(
+            fallback_body_html("try $x^2$"),
+            "try $x^2$",
+        )
+
+    def test_escapes_html(self):
+        self.assertIn(
+            "&lt;script&gt;",
+            fallback_body_html("<script>alert(1)</script>"),
+        )
+
+
+class FormBodyHtmlIntegrationTests(TestCase):
+    """End-to-end: POST through the views, check body_html on the row."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password="pw-test-12345")
+        self.client.force_login(self.user)
+
+    def test_submit_stores_sanitized_body_html(self):
+        # Client POSTs raw math LaTeX plus the rendered HTML it produced.
+        rendered = (
+            '<math xmlns="http://www.w3.org/1998/Math/MathML">'
+            "<msup><mi>x</mi><mn>2</mn></msup></math>"
+        )
+        self.client.post(
+            "/submit/",
+            {
+                "title": "math post",
+                "url": "",
+                "body": "look: $x^2$",
+                "body_html": rendered,
+                "post_globally": "on",
+            },
+        )
+        s = Submission.objects.get(title="math post")
+        self.assertIn("<math", s.body_html)
+        self.assertEqual(s.body, "look: $x^2$")
+
+    def test_submit_without_body_html_uses_fallback(self):
+        # JS-disabled flow: no body_html field posted.
+        self.client.post(
+            "/submit/",
+            {
+                "title": "no-js post",
+                "url": "",
+                "body": "math is $x^2$",
+                "post_globally": "on",
+            },
+        )
+        s = Submission.objects.get(title="no-js post")
+        # Fallback: dollar signs survive as literal text, no <math> emitted.
+        self.assertNotIn("<math", s.body_html)
+        self.assertIn("$x^2$", s.body_html)
+
+    def test_submit_malicious_body_html_is_sanitized(self):
+        evil = '<script>alert(1)</script><math><mi onclick="x">y</mi></math>'
+        self.client.post(
+            "/submit/",
+            {
+                "title": "evil",
+                "url": "",
+                "body": "anything",
+                "body_html": evil,
+                "post_globally": "on",
+            },
+        )
+        s = Submission.objects.get(title="evil")
+        self.assertNotIn("<script", s.body_html)
+        self.assertNotIn("onclick", s.body_html)
+        self.assertIn("<math", s.body_html)
+
+    def test_comment_post_populates_body_html(self):
+        sub = make_submission(title="t", body="x", author=self.user)
+        self.client.post(
+            sub.get_absolute_url(),
+            {
+                "body": "a $y$ b",
+                "body_html": '<p>x</p><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>y</mi></math>',
+                "scope": "global",
+            },
+        )
+        c = Comment.objects.get(submission=sub)
+        # <p> stripped (not in COMMENT_BODY profile), math kept.
+        self.assertNotIn("<p>", c.body_html)
+        self.assertIn("<math", c.body_html)
+
+
+class ModelBodyHtmlInvariantTests(TestCase):
+    """Direct model writes (tests, shell, imports) get a safe fallback."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("alice", password="pw-test-12345")
+
+    def test_submission_auto_populates_body_html_when_blank(self):
+        s = Submission.objects.create(
+            title="t", body="hello https://x.com", author=self.user
+        )
+        self.assertIn("href=", s.body_html)
+
+    def test_submission_respects_explicit_body_html(self):
+        s = Submission.objects.create(
+            title="t",
+            body="hi",
+            body_html="<math><mi>x</mi></math>",
+            author=self.user,
+        )
+        # Save should NOT clobber an explicit body_html.
+        self.assertEqual(s.body_html, "<math><mi>x</mi></math>")
+
+    def test_comment_auto_populates_body_html(self):
+        s = make_submission(title="t", body="x", author=self.user)
+        c = Comment.objects.create(submission=s, author=self.user, body="hi")
+        self.assertEqual(c.body_html, "hi")

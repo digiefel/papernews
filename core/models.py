@@ -34,6 +34,11 @@ class Submission(models.Model):
     title = models.CharField(max_length=300)
     url = models.URLField(max_length=2000, blank=True)
     body = models.TextField(blank=True)
+    # Rendered HTML for `body`: math (MathML) + autolinked text. Populated by
+    # the form layer (sanitized client-supplied render, with a server-side
+    # text-only fallback if the client omitted it). Display paths read this
+    # directly; never re-render at display time. See core/sanitize.py.
+    body_html = models.TextField(blank=True)
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="submissions"
     )
@@ -78,6 +83,16 @@ class Submission(models.Model):
         if not has_url and not has_body:
             raise ValidationError("Provide either a URL or body text.")
 
+    def save(self, *args, **kwargs):
+        # Invariant: body_html is populated whenever body is non-empty.
+        # The form path sets body_html explicitly (sanitized client render).
+        # Any other write path — tests, shell, future imports — gets the
+        # safe text-only fallback automatically.
+        if self.body and not self.body_html:
+            from .text import fallback_body_html
+            self.body_html = fallback_body_html(self.body)
+        super().save(*args, **kwargs)
+
 
 class Comment(models.Model):
     submission = models.ForeignKey(
@@ -94,6 +109,8 @@ class Comment(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments"
     )
     body = models.TextField()
+    # See Submission.body_html — same contract for comments.
+    body_html = models.TextField(blank=True)
     created = models.DateTimeField(auto_now_add=True, db_index=True)
     is_removed = models.BooleanField(default=False)
 
@@ -111,6 +128,13 @@ class Comment(models.Model):
             raise ValidationError(
                 "A reply must belong to the same submission as its parent."
             )
+
+    def save(self, *args, **kwargs):
+        # See Submission.save — same invariant.
+        if self.body and not self.body_html:
+            from .text import fallback_body_html
+            self.body_html = fallback_body_html(self.body)
+        super().save(*args, **kwargs)
 
 
 class SubmissionVote(models.Model):

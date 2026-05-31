@@ -1,4 +1,3 @@
-{% load markup %}
 <div class="comment" id="comment-{{ comment.pk }}" style="margin-left: {{ comment.indent }}rem;">
   <div class="comment-row">
     <form class="vote" method="post" action="{% url 'vote_comment' comment.pk %}">
@@ -17,7 +16,7 @@
           | on: <a href="{{ submission.get_absolute_url }}">{{ submission.title }}</a>
         {% endif %}
       </div>
-      <div class="comment-body">{{ comment.body|render_text }}</div>
+      <div class="comment-body">{{ comment.body_html|safe }}</div>
       {% if user.is_authenticated and not hide_reply %}
         <div class="reply-link"><a href="{% url 'reply' submission.pk comment.pk %}">reply</a></div>
       {% endif %}

@@ -6,6 +6,8 @@
   <title>{% block title %}Papernews{% endblock %}</title>
   <script>document.documentElement.classList.replace("no-js", "js");</script>
   <link rel="stylesheet" href="{% static 'style.css' %}">
+  <link rel="stylesheet" href="{% static 'temml.css' %}">
+  {% block extra_head %}{% endblock %}
 </head>
 <body{% if accent_color %} style="--accent: {{ accent_color }}"{% endif %}>
   <header>
@@ -36,5 +38,6 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
+  {% block extra_js %}{% endblock %}
 </body>
 </html>

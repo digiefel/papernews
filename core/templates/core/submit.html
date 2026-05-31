@@ -1,6 +1,12 @@
 {% extends "core/base.html" %}
+{% load static %}
 
 {% block title %}Submit &middot; Papernews{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'temml.min.js' %}" defer></script>
+  <script src="{% static 'math-compose.js' %}" defer></script>
+{% endblock %}
 
 {% block content %}
   <h1>Submit</h1>
@@ -44,10 +50,17 @@
       <span class="muted">{{ form.url.help_text }}</span>
       {{ form.url.errors }}
     </p>
-    <p>
+    <p class="text-editor">
       <label for="{{ form.body.id_for_label }}">Text</label>
+      <input type="checkbox" id="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle-state" disabled>
+      <label for="editor-mode-toggle-{{ form.body.id_for_label }}" class="editor-mode-toggle linkbtn js-only">
+        <span class="when-off">preview</span>
+        <span class="when-on">edit</span>
+      </label>
       {{ form.body }}
-      <span class="muted">{{ form.body.help_text }}</span>
+      <span class="editor-preview js-only" aria-live="polite"></span>
+      {{ form.body_html }}
+      <noscript><span class="muted">Math composition needs JavaScript; without it, <code>$…$</code> stays as plain text.</span></noscript>
       {{ form.body.errors }}
     </p>
 
